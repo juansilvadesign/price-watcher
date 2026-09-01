@@ -151,3 +151,79 @@ class TestEvaluate(RuleCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestSuccessiveNewLows(RuleCase):
+    """Juan's stated requirement, 2026-09-01, encoded verbatim.
+
+    "if the price is R$250 now and the lowest is R$230, it will notify me if 17:00
+    the price drops to R$228 and also if 17:01 the price drops to R$220"
+
+    The second drop must fire too — there is no cooldown and no suppression. Each new
+    low moves the record down, so the next low is measured against it.
+    """
+
+    def test_each_successive_new_low_fires(self):
+        t = make_target(rules={"lowest_ever": {"enabled": True}})
+        self.seed((25000,), (23000,))                       # now 250,00; record 230,00
+        self.assertEqual(self.history.min_price_cents("t1"), 23000)
+
+        # 17:00 -> 228,00 beats the 230,00 record
+        first = rules.evaluate(t, [reading(22800)], self.history)
+        self.assertEqual([a.rule for a in first], ["lowest_ever"])
+        self.history.append("t1", [reading(22800, "2026-09-01T20:00:00+00:00")])
+
+        # 17:01 -> 220,00 beats the new 228,00 record, one minute later
+        second = rules.evaluate(t, [reading(22000)], self.history)
+        self.assertEqual([a.rule for a in second], ["lowest_ever"])
+        self.assertIn("R$ 220,00", second[0].headline)
+
+    def test_a_drop_that_is_not_a_new_low_stays_silent(self):
+        """400 -> 370 is a big move but not a record. Explicitly NOT wanted."""
+        t = make_target(rules={"lowest_ever": {"enabled": True}})
+        self.seed((23000,), (40000,))
+        self.assertEqual(rules.evaluate(t, [reading(37000)], self.history), [])
+
+    def test_only_lowest_ever_is_armed_on_the_shipped_targets(self):
+        from pathlib import Path
+        from pricewatch.registry import load_targets
+        for t in load_targets(Path(__file__).resolve().parent.parent / "targets"):
+            armed = sorted(n for n, c in t.rules.items() if c.get("enabled"))
+            self.assertEqual(armed, ["lowest_ever"], f"{t.id} has {armed} armed")
+
+
+class TestChangeOnlyRecording(RuleCase):
+    def test_an_identical_run_is_not_recorded(self):
+        rs = [reading(25000, item="A"), reading(26000, item="B")]
+        self.assertTrue(self.history.append_if_changed("t1", rs))
+        before = len(self.history.load("t1"))
+        self.assertFalse(self.history.append_if_changed("t1", rs))
+        self.assertEqual(len(self.history.load("t1")), before)
+
+    def test_a_price_move_is_recorded(self):
+        self.history.append_if_changed("t1", [reading(25000, item="A")])
+        self.assertTrue(self.history.append_if_changed("t1", [reading(24900, item="A")]))
+
+    def test_a_quantity_move_alone_is_recorded(self):
+        """Stock moving is real signal even when the price held."""
+        self.history.append_if_changed("t1", [reading(25000, item="A", qty=10)])
+        self.assertTrue(self.history.append_if_changed("t1", [reading(25000, item="A", qty=3)]))
+
+    def test_an_item_appearing_or_vanishing_is_recorded(self):
+        self.history.append_if_changed("t1", [reading(25000, item="A")])
+        self.assertTrue(self.history.append_if_changed(
+            "t1", [reading(25000, item="A"), reading(30000, item="B")]))
+
+    def test_dedup_does_not_hide_a_record_low_from_lowest_ever(self):
+        """The dedup must never cost an alert."""
+        t = make_target(rules={"lowest_ever": {"enabled": True}})
+        self.history.append_if_changed("t1", [reading(25000)])
+        for _ in range(5):                                  # many unchanged polls
+            self.history.append_if_changed("t1", [reading(25000)])
+        self.assertEqual(len(self.history.load("t1")), 1)
+        self.assertEqual([a.rule for a in rules.evaluate(t, [reading(24000)], self.history)],
+                         ["lowest_ever"])
+
+    def test_an_empty_run_is_never_treated_as_unchanged(self):
+        """Sold out is data, but it must not silently look like 'nothing happened'."""
+        self.assertFalse(self.history.append_if_changed("t1", []))

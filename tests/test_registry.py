@@ -91,7 +91,11 @@ class TestRealTargets(unittest.TestCase):
         for t in targets:
             self.assertEqual(t.adapter, "buyticketbrasil")
             self.assertEqual(t.filters["extra"]["sector"], ["Gramado"])
-            self.assertTrue(t.rules["below_threshold"]["enabled"])
+            # WHICH rules are armed is pinned in test_rules.TestSuccessiveNewLows;
+            # here we only assert every rule is structurally valid and loadable.
+            self.assertTrue(set(t.rules), f"{t.id} declares no rules")
+            self.assertTrue(t.rules["below_threshold"]["price_cents"] > 0,
+                            "a disabled rule must keep its parameter for re-arming")
 
 
 if __name__ == "__main__":
