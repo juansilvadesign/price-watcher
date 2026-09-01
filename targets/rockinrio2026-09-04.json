@@ -19,7 +19,7 @@
       "entry_class": null
     }
   },
-  "_note_rules": "price_brl re-baselined 2026-09-01: 275.00 -> 230.00. The original 275.00 went DORMANT once the price fell under it — below_threshold is edge-triggered, so a ceiling above the current floor can never fire again. Set below the observed floor of R$ 250.00. Re-check whenever the record low moves.",
+  "_note_rules": "price_brl re-baselined 2026-09-01: 275.00 -> 230.00. The original 275.00 went DORMANT once the price fell under it — below_threshold is edge-triggered, so a ceiling above the current floor can never fire again. Set below the observed floor of R$ 250.00. Re-check whenever the record low moves.  price_changed fires on ANY move since the previous run (Juan's ask 2026-09-01). It is the noisiest rule by far — set direction to \"down\" to hear only about drops, or raise min_delta_brl to ignore churn.",
   "rules": {
     "lowest_ever": {
       "enabled": true
@@ -31,6 +31,11 @@
     "drop_pct": {
       "enabled": true,
       "pct": 5.0
+    },
+    "price_changed": {
+      "enabled": true,
+      "direction": "any",
+      "min_delta_brl": 0.01
     }
   }
 }
