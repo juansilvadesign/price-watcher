@@ -106,7 +106,7 @@ def main(argv=None) -> int:
 
     names = notify.configured_names(args.notifier)
     try:
-        notifier = notify.build(names)
+        notifier = notify.build(names, on_warning=lambda m: print(m, file=sys.stderr))
     except Exception as e:
         # Fail here, not on the first real alert days from now. A sink that cannot be
         # constructed is a misconfiguration, and discovering it at alert time means

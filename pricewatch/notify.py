@@ -22,6 +22,7 @@ from __future__ import annotations
 import base64
 import html
 import json
+import os
 import shutil
 import subprocess
 import urllib.parse
@@ -133,14 +134,34 @@ class WindowsToastNotifier:
     name = "toast"
     APP_ID = r"{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\WindowsPowerShell\v1.0\powershell.exe"
 
+    #: Fallbacks for when PATH does not carry WSL's Windows interop entries. Under
+    #: cron, PATH is roughly /usr/bin:/bin and `which powershell.exe` returns None --
+    #: which, before this existed, aborted the entire run at startup and cost the
+    #: prices and the Telegram alert along with the toast.
+    CANDIDATES = (
+        "/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe",
+        "/mnt/c/WINDOWS/System32/WindowsPowerShell/v1.0/powershell.exe",
+    )
+
+    @classmethod
+    def find_powershell(cls) -> str | None:
+        found = shutil.which("powershell.exe")
+        if found:
+            return found
+        for c in cls.CANDIDATES:
+            if os.path.exists(c):
+                return c
+        return None
+
     def __init__(self, runner: Callable[[list[str]], None] = _powershell_run,
                  powershell: str | None = None) -> None:
         self._run = runner
-        self._ps = powershell or shutil.which("powershell.exe")
+        self._ps = powershell or self.find_powershell()
         if not self._ps:
             raise NotifyError(
-                "powershell.exe not found on PATH — the 'toast' sink only works from "
-                "WSL on a Windows host. Drop it from --notifier / PRICEWATCH_NOTIFIERS.")
+                "powershell.exe not found on PATH nor at any known Windows location — "
+                "the 'toast' sink only works from WSL on a Windows host. Drop it from "
+                "--notifier / PRICEWATCH_NOTIFIERS.")
 
     #: Apostrophe and quote are escaped as XML entities on purpose, not for XML's
     #: sake but for PowerShell's: the toast XML is embedded in a single-quoted PS
@@ -199,11 +220,30 @@ SINKS: dict[str, Callable[[], Notifier]] = {
 }
 
 
-def build(names: list[str]) -> Notifier:
+def build(names: list[str], on_warning: Callable[[str], None] = lambda m: None) -> Notifier:
+    """Construct the named sinks.
+
+    A sink that cannot be constructed is a misconfiguration and must be surfaced at
+    startup rather than on the first real alert. But killing the whole run because a
+    *secondary* channel is unavailable would cost the price history and the channels
+    that do work — so as long as ONE sink survives, the run continues with a loud
+    warning. Only losing every sink is fatal: at that point you would be blind.
+    """
     unknown = [n for n in names if n not in SINKS]
     if unknown:
         raise KeyError(f"unknown notifier(s) {unknown}; available: {sorted(SINKS)}")
-    return MultiNotifier([SINKS[n]() for n in names])
+
+    built, failed = [], []
+    for n in names:
+        try:
+            built.append(SINKS[n]())
+        except Exception as e:                          # noqa: BLE001
+            failed.append(f"{n}: {type(e).__name__}: {e}")
+    if failed and not built:
+        raise NotifyError("every notifier failed to build — " + "; ".join(failed))
+    for f in failed:
+        on_warning(f"WARNING: notifier unavailable, continuing without it — {f}")
+    return MultiNotifier(built)
 
 
 def configured_names(cli: list[str] | None) -> list[str]:
