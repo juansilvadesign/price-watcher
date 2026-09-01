@@ -51,12 +51,22 @@ offline but has **never delivered a real message** — it is blocked on a chat i
       instead of aborting (fatal only when *every* sink dies).
 - [x] **History un-versioned** (Juan's call) — gitignored, `.gitkeep` retained.
 
+## Changed — v1.3 (2026-09-01)
+
+- [x] 🔴 **Rule scope narrowed to `lowest_ever` alone** (Juan): notify when the price
+      drops below the lowest ever seen, and nothing else. `below_threshold`,
+      `drop_pct` and `price_changed` are configured but **disabled**. Successive
+      records each fire — 230 → 228 → 220 alerts twice. A non-record drop is silent.
+- [x] 🔴 **Cron tightened to every minute** so a dip at 17:01 is seen at 17:01.
+- [x] **Change-only recording** (`append_if_changed`) — without it, one-minute polling
+      would reach ~190 MB by 13/09 and re-parse ~414,000 lines per run.
+- [x] Juan's requirement encoded verbatim as a test (`TestSuccessiveNewLows`).
+
 ## Next — in priority order
-- [ ] **Watch the noise for a day.** `price_changed` at `any`/R$ 0,01 across three
-      targets every 30 min may prove too chatty. Dials: `"direction": "down"`, or a
-      larger `min_delta_brl`. Decide from real volume, not a guess.
-- [ ] **Re-check the ceilings as history accumulates.** They are set just under the
-      2026-09-01 floors and will go dormant again the moment the price drops under them.
+- [ ] **Confirm the alert volume feels right.** Only `lowest_ever` is armed and the
+      poll is every minute, so volume tracks how often a record breaks, not the poll
+      rate. If it is still too much, the honest lever is a *floor* — there is no rule
+      today for "a new low, but only if it is at least N% below the last record".
 - [ ] ⛔ **n8n fallback scheduler — considered and declined 2026-09-01 (Juan).** cron
       already runs under systemd here; n8n would add a Docker dependency, its own
       gotcha corpus, and could not drive the Windows toast sink. Revisit only if cron

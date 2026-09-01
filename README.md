@@ -51,8 +51,14 @@ Nothing is scheduled for you. When you want it running, add one line to `crontab
 ```cron
 MAILTO=""
 PATH=/usr/local/bin:/usr/bin:/bin:/mnt/c/Windows/System32/WindowsPowerShell/v1.0
-*/30 * * * * /usr/bin/python3 /abs/path/watch.py >> /abs/path/history/cron.log 2>&1
+* * * * * /usr/bin/python3 /abs/path/watch.py >> /abs/path/history/cron.log 2>&1
 ```
+
+**Every minute, deliberately.** With only `lowest_ever` armed, alert volume is set by
+how often a record is broken — not by the poll rate — so polling fast costs
+notifications nothing and buys the ability to catch a dip that appears and sells
+inside a gap. The cost is request volume: **3 requests/minute (~4,320/day)**. Back off
+by changing `* * * * *` to `*/5 * * * *`.
 
 No `cd` is needed — targets, history and `.env` all resolve relative to the source
 file, not the working directory.
@@ -66,10 +72,10 @@ degrades to the surviving sinks rather than aborting — but set the PATH anyway
 in `cron.log` and you never read it. If you are scheduling this, set
 `PRICEWATCH_NOTIFIERS` to include `telegram` (reaches your phone) or `toast`.
 
-⚠️ **Pick the interval deliberately.** On the Rock in Rio targets, availability was
-observed moving within *minutes*. A daily poll will miss most of what it exists to
-catch; a 1-minute poll is rude to someone else's server. 15–30 min is a reasonable
-middle, and tighter only on the day you actually intend to buy.
+⚠️ **The interval and the armed rules have to be chosen together.** A fast poll with
+a sensitive rule (`price_changed`) is a notification firehose; a fast poll with
+`lowest_ever` alone is quiet, because a record can only be broken so often. This
+project ships the second combination.
 
 ## Adding a target
 
@@ -109,10 +115,19 @@ so a cron job does not re-alert every tick and train you to ignore it.
 | `drop_pct` | the cheapest fell ≥ N% since the previous run | `pct` |
 | `price_changed` | the cheapest moved **at all** since the previous run | `direction` (`any`/`down`/`up`), optional `min_delta_brl` |
 
-⚠️ `price_changed` is by far the noisiest — on a resale market polled every 30 minutes
-it can fire several times a day, including on moves of a few centavos. Two dials:
-`"direction": "down"` to hear only about drops, and `min_delta_brl` to ignore churn.
-A bad `direction` value is rejected at load time, not silently ignored.
+**As shipped, only `lowest_ever` is armed.** The other three are configured but
+disabled — flip `enabled` to re-arm one. That is deliberate: the goal is *"tell me
+when it drops below the lowest I have seen, and nothing else."*
+
+Each successive record fires again, with no cooldown: if the record is R$ 230,00 and
+the price hits R$ 228,00 it alerts, and when it hits R$ 220,00 a minute later it
+alerts again, because the record moved down with it. A large drop that is **not** a
+record (R$ 400 → R$ 370 while the record is R$ 230) stays silent by design.
+
+⚠️ `price_changed` is by far the noisiest of the disabled three — polled every minute
+it fires on moves of a few centavos. Two dials if you ever re-arm it:
+`"direction": "down"`, and `min_delta_brl` to ignore churn. A bad `direction` value is
+rejected at load time, not silently ignored.
 
 A rule enabled without its parameter **refuses to load**. An enabled rule that can
 never fire looks identical to a healthy one, and you would only find out by never
@@ -184,6 +199,17 @@ Add a class with `name` and `send(target_label, alerts)` to `notify.py`, registe
 in `SINKS`. Give it an injectable transport like the two above so it stays testable
 with no network. Nothing is stubbed here — an untested notifier that silently no-ops
 is worse than not having one.
+
+## Only changes are recorded
+
+`append_if_changed` skips a run that is byte-identical to the last recorded one, so
+`history/*.jsonl` is a **change log**: every line is a moment the market actually
+moved. At a one-minute poll, recording every run would reach ~190 MB in twelve days
+and force each later run to re-parse hundreds of thousands of lines to answer
+`min_price_cents` — the watcher would get slower the longer it ran.
+
+The trade-off, stated: the history no longer records *that a poll happened*. Use
+`history/cron.log` for liveness. An empty result is never treated as "unchanged".
 
 ## The price history is not versioned
 
