@@ -3,8 +3,12 @@ __pycache__/
 .venv/
 .pytest_cache/
 
-# history/*.jsonl is deliberately NOT ignored — the price record IS the artifact
-# this project exists to produce, and an ignored file has no second copy.
+# Price history is NOT versioned (Juan's call 2026-09-01): under a 30-minute cron it
+# would make the repo dirty every half hour for a record nobody reads back.
+# ⚠️ Consequence, stated plainly: these files now exist ONLY on this machine. There is
+# no second copy. Losing the WSL disk loses the price record.
+history/*.jsonl
+history/*.log
 
 # Secrets. The Telegram bot token lives here; it must never reach the repo,
 # private or not. `.env.example` documents the keys and IS committed.
