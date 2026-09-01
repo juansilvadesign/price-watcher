@@ -1,0 +1,36 @@
+{
+  "id": "rockinrio2026-09-04",
+  "label": "Rock in Rio 2026 — 04/09 (sex) · Gramado",
+  "adapter": "buyticketbrasil",
+  "enabled": true,
+  "params": {
+    "event_slug": "rockinrio2026",
+    "data_millis": 1788570000000,
+    "evento_local": "1765323377313x720803947984191500",
+    "cidade": "Rio de Janeiro"
+  },
+  "_note_filters": "Gramado only (Juan's call 2026-09-01). entry_class is deliberately unfiltered: Rock in Rio does not check ticket type at the gate, so any class is usable and the cheapest one wins. Set extra.sector to null to watch all 6 sectors.",
+  "filters": {
+    "min_quantity": 1,
+    "extra": {
+      "sector": [
+        "Gramado"
+      ],
+      "entry_class": null
+    }
+  },
+  "_note_rules": "price_brl 275.00 = the lowest Gramado price observed during the 2026-09-01 recon. Tune it as history accumulates.",
+  "rules": {
+    "lowest_ever": {
+      "enabled": true
+    },
+    "below_threshold": {
+      "enabled": true,
+      "price_brl": 275.0
+    },
+    "drop_pct": {
+      "enabled": true,
+      "pct": 5.0
+    }
+  }
+}
