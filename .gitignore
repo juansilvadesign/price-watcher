@@ -5,3 +5,9 @@ __pycache__/
 
 # history/*.jsonl is deliberately NOT ignored — the price record IS the artifact
 # this project exists to produce, and an ignored file has no second copy.
+
+# Secrets. The Telegram bot token lives here; it must never reach the repo,
+# private or not. `.env.example` documents the keys and IS committed.
+.env
+.env.*
+!.env.example
