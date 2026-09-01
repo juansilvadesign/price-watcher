@@ -1,0 +1,7 @@
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+
+# history/*.jsonl is deliberately NOT ignored — the price record IS the artifact
+# this project exists to produce, and an ignored file has no second copy.
