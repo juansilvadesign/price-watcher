@@ -19,14 +19,14 @@
       "entry_class": null
     }
   },
-  "_note_rules": "price_brl 275.00 = the lowest Gramado price observed during the 2026-09-01 recon. Tune it as history accumulates.",
+  "_note_rules": "price_brl re-baselined 2026-09-01: 275.00 -> 225.00. The original 275.00 went DORMANT once the price fell under it — below_threshold is edge-triggered, so a ceiling above the current floor can never fire again. Set below the observed floor of R$ 242.00. Re-check whenever the record low moves.",
   "rules": {
     "lowest_ever": {
       "enabled": true
     },
     "below_threshold": {
       "enabled": true,
-      "price_brl": 275.0
+      "price_brl": 225.0
     },
     "drop_pct": {
       "enabled": true,
