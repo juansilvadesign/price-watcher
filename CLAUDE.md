@@ -32,6 +32,14 @@ shared belongs in the harness. If you find yourself putting a site name in
   venv rebuilt after six months of not being touched is a tool that stays untouched.
 - **Fixtures are real captured responses**, never hand-written approximations of what
   a site "probably" returns.
+- **A delivery failure is never swallowed.** Every sink is attempted, then
+  `NotifyError` is raised and `watch.py` exits **3**. A notifier that fails quietly
+  turns "you were not alerted" into "there was nothing to alert about".
+- **A sink that cannot be constructed fails at startup, not at alert time.** A missing
+  `TELEGRAM_CHAT_ID` must not be discovered on the one message that mattered.
+- ⛔ **`.env` is parsed, never sourced**, and never committed. Anything interpolated
+  into a shell, a PowerShell script, or markup gets escaped at the boundary — ticket
+  names are third-party text (an apostrophe in one would otherwise break the toast).
 
 ## Boundaries
 

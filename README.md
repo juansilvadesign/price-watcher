@@ -41,8 +41,8 @@ python3 watch.py --list                # show the registry
 python3 -m unittest discover -s tests -t .   # 45 tests, no network
 ```
 
-Exit codes: `0` clean · `1` at least one adapter failed · `2` configuration error.
-Cron and `&&` chains can rely on them.
+Exit codes: `0` clean · `1` at least one adapter failed · `2` configuration error ·
+`3` alerts fired but delivery failed. Cron and `&&` chains can rely on them.
 
 ### Running it unattended
 
@@ -50,8 +50,12 @@ Nothing is scheduled for you. When you want it running, add one line to `crontab
 
 ```cron
 # every 30 min, log to the project
-*/30 * * * * /usr/bin/python3 watch.py >> history/cron.log 2>&1
+*/30 * * * * cd <abs path to this repo> && /usr/bin/python3 watch.py >> history/cron.log 2>&1
 ```
+
+⚠️ **A console-only sink plus cron is a watcher that tells no one** — the alert lands
+in `cron.log` and you never read it. If you are scheduling this, set
+`PRICEWATCH_NOTIFIERS` to include `telegram` (reaches your phone) or `toast`.
 
 ⚠️ **Pick the interval deliberately.** On the Rock in Rio targets, availability was
 observed moving within *minutes*. A daily poll will miss most of what it exists to
@@ -112,12 +116,66 @@ read; return `[]` only for a genuine "nothing on sale".** Collapsing those two i
 an empty list turns a broken watcher into a healthy-looking one that reports
 nothing forever.
 
-## Adding a notification channel
+## Notifications
 
-`notify.py` defines the `Notifier` protocol and ships a console sink. Add a class
-with `send(target_label, alerts)` and register it in `SINKS`; select it with
-`--notifier <name>`. Nothing is stubbed — an untested notifier that silently
-no-ops is worse than not having one.
+Three sinks ship. Combine them freely — `--notifier console telegram toast`, or set
+`PRICEWATCH_NOTIFIERS` in `.env` so the crontab line stays short.
+
+| sink | reaches you when | needs |
+|---|---|---|
+| `console` | you are looking at the terminal | — |
+| `telegram` | anywhere, including your phone | `BOT_API_TOKEN` + `TELEGRAM_CHAT_ID` |
+| `toast` | you are at the Windows desktop | WSL + `powershell.exe` (no module to install) |
+
+**Prove delivery before trusting it**, rather than discovering it is broken on the
+one alert you cared about:
+
+```bash
+python3 watch.py --test-notify                     # uses PRICEWATCH_NOTIFIERS
+python3 watch.py --test-notify --notifier toast    # or just one
+```
+
+Every sink is attempted even if an earlier one fails, so a Telegram outage does not
+cost you the toast. A delivery failure is never swallowed: it exits **3**, which is
+distinct from an adapter failure (1) precisely because 3 is the one that means *you
+were not told*.
+
+### Telegram setup
+
+`TELEGRAM_CHAT_ID` is **your** chat id — the destination — **not** the bot's. A bot
+cannot open a conversation, so the chat has to write to it first:
+
+1. Create the bot with [@BotFather](https://t.me/BotFather); put the token in `.env`
+   as `BOT_API_TOKEN`.
+2. In Telegram, send your bot any message (`/start` is fine).
+3. `python3 tools/telegram_chat_id.py` → prints the id. Put it in `.env`.
+
+The helper distinguishes the failure modes rather than printing an empty list: an
+invalid token, a webhook set on the bot (which makes `getUpdates` always empty), and
+"you have not messaged it yet" each say so.
+
+### Windows toast (from WSL)
+
+Uses the built-in WinRT toast API through `powershell.exe -EncodedCommand`, under the
+stock Windows PowerShell AppId. Nothing to install — no BurntToast.
+
+⚠️ **A clean send is not a visible toast.** `Show()` returns success even when Focus
+Assist / Do Not Disturb suppresses the banner. The sink can only report that Windows
+accepted it, so do not make `toast` your only channel.
+
+### Adding another channel
+
+Add a class with `name` and `send(target_label, alerts)` to `notify.py`, register it
+in `SINKS`. Give it an injectable transport like the two above so it stays testable
+with no network. Nothing is stubbed here — an untested notifier that silently no-ops
+is worse than not having one.
+
+## Secrets
+
+`.env` holds the bot token and is **gitignored**; `.env.example` documents the keys
+and is committed. ⛔ The file is **parsed in Python, never sourced in a shell** —
+sourcing leaks every value into shell history and into every child process, and one
+malformed line executes arbitrary code. Real environment variables override `.env`.
 
 ## Site #1 — buyticketbrasil
 
