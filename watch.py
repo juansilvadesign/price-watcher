@@ -61,8 +61,10 @@ def run_target(target, history, notifier, dry_run: bool, verbose: bool) -> str:
 
     if dry_run:
         print(f"  [dry-run] {len(readings)} readings NOT written")
+    elif history.append_if_changed(target.id, readings):
+        print(f"  recorded {len(readings)} readings")
     else:
-        history.append(target.id, readings)
+        print("  unchanged since the last recording — nothing written")
 
     if fired:
         try:
