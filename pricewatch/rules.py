@@ -85,13 +85,60 @@ def drop_pct(target, readings, history) -> Alert | None:
     )
 
 
-#: Rule name -> (evaluator, required config keys). The registry validates against
-#: this table, so a rule enabled without its parameter fails loudly at load time
-#: instead of silently never firing.
+def price_changed(target, readings, history) -> Alert | None:
+    """Fires whenever the cheapest price moved at all since the previous run.
+
+    The most sensitive rule here, and the one most able to become noise: on a resale
+    market polled every 30 minutes it can fire several times a day. `direction`
+    narrows it to the moves you would actually act on, and `min_delta_brl` filters
+    out churn that is not worth a notification.
+
+    Still edge-triggered — it compares against the previous run, so a price that
+    holds steady stays silent no matter how far it is from any threshold.
+    """
+    cfg = target.rules["price_changed"]
+    direction = cfg["direction"]
+    min_delta = cfg.get("min_delta_cents", 1)
+
+    now = _cheapest(readings)
+    prev = history.last_run_min_cents(target.id)
+    if now is None or prev is None:
+        return None
+
+    delta = now.price_cents - prev
+    if abs(delta) < min_delta:
+        return None
+    if direction == "down" and delta >= 0:
+        return None
+    if direction == "up" and delta <= 0:
+        return None
+
+    arrow = "DOWN" if delta < 0 else "UP"
+    pct = abs(delta) / prev * 100.0 if prev else 0.0
+    return Alert(
+        target_id=target.id,
+        rule="price_changed",
+        headline=f"{arrow} {fmt_brl(abs(delta))} — now {fmt_brl(now.price_cents)}",
+        detail=(f"{now.item} moved {fmt_brl(prev)} → {fmt_brl(now.price_cents)} "
+                f"({arrow.lower()} {pct:.1f}%), qty {now.quantity}."),
+        reading=now,
+    )
+
+def _validate_direction(cfg: dict) -> str | None:
+    if cfg.get("direction") not in ("any", "down", "up"):
+        return f"direction must be one of any/down/up, got {cfg.get('direction')!r}"
+    return None
+
+
+#: Rule name -> (evaluator, required config keys, optional value validator). The
+#: registry validates against this table, so a rule enabled without its parameter —
+#: or with a nonsense value — fails loudly at load time instead of silently never
+#: firing.
 RULES = {
-    "lowest_ever":     (lowest_ever,     ()),
-    "below_threshold": (below_threshold, ("price_cents",)),
-    "drop_pct":        (drop_pct,        ("pct",)),
+    "lowest_ever":     (lowest_ever,     (),               None),
+    "below_threshold": (below_threshold, ("price_cents",), None),
+    "drop_pct":        (drop_pct,        ("pct",),         None),
+    "price_changed":   (price_changed,   ("direction",),   _validate_direction),
 }
 
 
@@ -100,7 +147,7 @@ def evaluate(target, readings, history) -> list[Alert]:
     for name, cfg in target.rules.items():
         if not cfg.get("enabled", False):
             continue
-        fn, _ = RULES[name]
+        fn = RULES[name][0]
         alert = fn(target, readings, history)
         if alert is not None:
             alerts.append(alert)

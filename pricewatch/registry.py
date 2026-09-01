@@ -56,9 +56,11 @@ def _normalise_rules(raw: dict, where: str) -> dict[str, dict]:
         # Targets are hand-edited, so thresholds are written in BRL and converted here.
         if name == "below_threshold" and "price_brl" in cfg:
             cfg["price_cents"] = int(round(float(cfg.pop("price_brl")) * 100))
+        if name == "price_changed" and "min_delta_brl" in cfg:
+            cfg["min_delta_cents"] = max(1, int(round(float(cfg.pop("min_delta_brl")) * 100)))
 
         if cfg.get("enabled", False):
-            _, required = _rules.RULES[name]
+            _, required, validator = _rules.RULES[name]
             for key in required:
                 if cfg.get(key) is None:
                     raise ConfigError(
@@ -66,6 +68,10 @@ def _normalise_rules(raw: dict, where: str) -> dict[str, dict]:
                         f"An enabled rule with no parameter never fires and looks healthy "
                         f"-- refusing to load it."
                     )
+            if validator is not None:
+                problem = validator(cfg)
+                if problem:
+                    raise ConfigError(f"{where}: rule {name!r}: {problem}")
         out[name] = cfg
     return out
 
