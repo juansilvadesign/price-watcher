@@ -34,17 +34,33 @@ offline but has **never delivered a real message** — it is blocked on a chat i
 - [x] `tools/telegram_chat_id.py` — names the failure (bad token / webhook set / you
       have not messaged the bot) instead of printing an empty list.
 
-## Next — in priority order
+## Done — v1.2 (2026-09-01)
 
-- [ ] 🔴 **Get the Telegram chat id and prove real delivery.** Message
-      @price_watcher_hub_bot, run `tools/telegram_chat_id.py`, put the id in `.env`,
-      then `python3 watch.py --test-notify`. Until that message actually arrives,
-      Telegram is unproven — offline tests only prove the payload, never the delivery.
-- [ ] 🔴 **Decide the cadence and enable cron.** Still nothing scheduled; history holds
-      3 runs, all from the build session. This is the last thing between the tool and
-      being useful, and day one is 04/09.
+- [x] **Telegram delivery PROVEN** — `ok=true`, `message_id=3`, delivered to chat
+      `1689939411` (`jaypy06`), matching `.env`. Not a probe: a real send.
+- [x] **Windows toast confirmed visually** on the desktop.
+- [x] **`price_changed` rule** — fires on ANY move since the previous run, with
+      `direction` (any/down/up) and `min_delta_brl`. Enabled on all three targets at
+      `any` / R$ 0,01. Already fired in production on a R$ 1,10 move.
+- [x] 🔴 **Cron installed** — `*/30`, verified by executing the exact cron command
+      under a stripped environment, and by a one-minute probe proving the daemon fires.
+- [x] **The cron trap that would have killed every run:** cron's PATH hides
+      `powershell.exe`, so building the `toast` sink raised and aborted the run at
+      startup — losing prices and Telegram too. Fixed three ways: `PATH` in the
+      crontab, absolute-path fallbacks, and `build()` now degrades to surviving sinks
+      instead of aborting (fatal only when *every* sink dies).
+- [x] **History un-versioned** (Juan's call) — gitignored, `.gitkeep` retained.
+
+## Next — in priority order
+- [ ] **Watch the noise for a day.** `price_changed` at `any`/R$ 0,01 across three
+      targets every 30 min may prove too chatty. Dials: `"direction": "down"`, or a
+      larger `min_delta_brl`. Decide from real volume, not a guess.
 - [ ] **Re-check the ceilings as history accumulates.** They are set just under the
       2026-09-01 floors and will go dormant again the moment the price drops under them.
+- [ ] ⛔ **n8n fallback scheduler — considered and declined 2026-09-01 (Juan).** cron
+      already runs under systemd here; n8n would add a Docker dependency, its own
+      gotcha corpus, and could not drive the Windows toast sink. Revisit only if cron
+      proves unreliable.
 - [ ] **The other 4 Rock in Rio dates** — ids are in the README table, one JSON file
       each. Only if you would actually consider those nights.
 

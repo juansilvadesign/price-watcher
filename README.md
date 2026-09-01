@@ -49,9 +49,18 @@ Exit codes: `0` clean · `1` at least one adapter failed · `2` configuration er
 Nothing is scheduled for you. When you want it running, add one line to `crontab -e`:
 
 ```cron
-# every 30 min, log to the project
-*/30 * * * * cd <abs path to this repo> && /usr/bin/python3 watch.py >> history/cron.log 2>&1
+MAILTO=""
+PATH=/usr/local/bin:/usr/bin:/bin:/mnt/c/Windows/System32/WindowsPowerShell/v1.0
+*/30 * * * * /usr/bin/python3 /abs/path/watch.py >> /abs/path/history/cron.log 2>&1
 ```
+
+No `cd` is needed — targets, history and `.env` all resolve relative to the source
+file, not the working directory.
+
+🔴 **The `PATH` line is load-bearing on WSL.** cron's default PATH is roughly
+`/usr/bin:/bin`, which hides `powershell.exe`; without it the `toast` sink cannot be
+built. `WindowsToastNotifier.CANDIDATES` is the second line of defence, and `build()`
+degrades to the surviving sinks rather than aborting — but set the PATH anyway.
 
 ⚠️ **A console-only sink plus cron is a watcher that tells no one** — the alert lands
 in `cron.log` and you never read it. If you are scheduling this, set
@@ -98,6 +107,12 @@ so a cron job does not re-alert every tick and train you to ignore it.
 | `lowest_ever` | this run beats every price ever recorded (silent on the first run — no baseline) | — |
 | `below_threshold` | the cheapest *crosses down* to at-or-below your ceiling | `price_brl` |
 | `drop_pct` | the cheapest fell ≥ N% since the previous run | `pct` |
+| `price_changed` | the cheapest moved **at all** since the previous run | `direction` (`any`/`down`/`up`), optional `min_delta_brl` |
+
+⚠️ `price_changed` is by far the noisiest — on a resale market polled every 30 minutes
+it can fire several times a day, including on moves of a few centavos. Two dials:
+`"direction": "down"` to hear only about drops, and `min_delta_brl` to ignore churn.
+A bad `direction` value is rejected at load time, not silently ignored.
 
 A rule enabled without its parameter **refuses to load**. An enabled rule that can
 never fire looks identical to a healthy one, and you would only find out by never
@@ -169,6 +184,13 @@ Add a class with `name` and `send(target_label, alerts)` to `notify.py`, registe
 in `SINKS`. Give it an injectable transport like the two above so it stays testable
 with no network. Nothing is stubbed here — an untested notifier that silently no-ops
 is worse than not having one.
+
+## The price history is not versioned
+
+`history/*.jsonl` is **gitignored**. Under a 30-minute cron it would dirty the repo
+every half hour for a record nobody reads back. ⚠️ **Consequence, stated plainly:
+those files exist only on this machine — there is no second copy.** `history/.gitkeep`
+keeps the directory alive in a fresh clone.
 
 ## Secrets
 
