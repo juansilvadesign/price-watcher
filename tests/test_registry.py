@@ -43,6 +43,19 @@ class TestRegistry(unittest.TestCase):
         cfg = dict(VALID, rules={"below_threshold": {"enabled": False}})
         self.assertIsNotNone(load_target(self.write("x.json", cfg)))
 
+    def test_bad_direction_value_is_fatal(self):
+        """Presence is not enough -- a nonsense value must not load either."""
+        cfg = dict(VALID, rules={"price_changed": {"enabled": True, "direction": "sideways"}})
+        with self.assertRaises(ConfigError) as cm:
+            load_target(self.write("x.json", cfg))
+        self.assertIn("any/down/up", str(cm.exception))
+
+    def test_min_delta_brl_becomes_centavos(self):
+        cfg = dict(VALID, rules={"price_changed": {"enabled": True, "direction": "any",
+                                                   "min_delta_brl": 2.50}})
+        t = load_target(self.write("x.json", cfg))
+        self.assertEqual(t.rules["price_changed"]["min_delta_cents"], 250)
+
     def test_unknown_rule_name_is_fatal(self):
         cfg = dict(VALID, rules={"typo_rule": {"enabled": True}})
         with self.assertRaises(ConfigError):

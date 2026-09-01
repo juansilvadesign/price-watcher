@@ -85,6 +85,45 @@ class TestDropPct(RuleCase):
         self.assertIsNone(rules.drop_pct(self.rule_target(), [reading(100)], self.history))
 
 
+class TestPriceChanged(RuleCase):
+    def target(self, direction="any", **extra):
+        cfg = {"enabled": True, "direction": direction}
+        cfg.update(extra)
+        return make_target(rules={"price_changed": cfg})
+
+    def test_fires_on_any_move_down(self):
+        self.seed((30000,))
+        self.assertIsNotNone(rules.price_changed(self.target(), [reading(29999)], self.history))
+
+    def test_fires_on_any_move_up(self):
+        self.seed((30000,))
+        a = rules.price_changed(self.target(), [reading(30001)], self.history)
+        self.assertIsNotNone(a)
+        self.assertIn("UP", a.headline)
+
+    def test_silent_when_the_price_held(self):
+        self.seed((30000,))
+        self.assertIsNone(rules.price_changed(self.target(), [reading(30000)], self.history))
+
+    def test_direction_down_ignores_a_rise(self):
+        self.seed((30000,))
+        self.assertIsNone(rules.price_changed(self.target("down"), [reading(31000)], self.history))
+        self.assertIsNotNone(rules.price_changed(self.target("down"), [reading(29000)], self.history))
+
+    def test_direction_up_ignores_a_fall(self):
+        self.seed((30000,))
+        self.assertIsNone(rules.price_changed(self.target("up"), [reading(29000)], self.history))
+
+    def test_min_delta_filters_churn(self):
+        self.seed((30000,))
+        t = self.target(min_delta_cents=500)
+        self.assertIsNone(rules.price_changed(t, [reading(29800)], self.history))   # -2,00
+        self.assertIsNotNone(rules.price_changed(t, [reading(29400)], self.history))  # -6,00
+
+    def test_silent_without_a_previous_run(self):
+        self.assertIsNone(rules.price_changed(self.target(), [reading(100)], self.history))
+
+
 class TestEvaluate(RuleCase):
     def test_disabled_rules_never_run(self):
         self.seed((30000,))

@@ -79,3 +79,32 @@ class TestFailureModes(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestShippedTargetUrls(unittest.TestCase):
+    """Every alert links to ONE date's page, never the generic event page.
+
+    Pinned verbatim because a wrong `data`/`evento_local` pair does not error -- the
+    site quietly falls back to the generic listing, so the alert would still look
+    fine while sending you to the wrong page.
+    """
+
+    EXPECTED = {
+        "rockinrio2026-09-04": "https://buyticketbrasil.com/evento/rockinrio2026"
+            "?data=1788570000000&evento_local=1765323377313x720803947984191500&cidade=Rio+de+Janeiro",
+        "rockinrio2026-09-05": "https://buyticketbrasil.com/evento/rockinrio2026"
+            "?data=1788656400000&evento_local=1765323572984x293448430956314600&cidade=Rio+de+Janeiro",
+        "rockinrio2026-09-11": "https://buyticketbrasil.com/evento/rockinrio2026"
+            "?data=1789174800000&evento_local=1765323734393x441784445622288400&cidade=Rio+de+Janeiro",
+    }
+
+    def test_each_target_builds_its_own_day_url(self):
+        from pathlib import Path
+        from pricewatch.registry import load_targets
+        adapter = BuyTicketBrasilAdapter()
+        built = {t.id: adapter.build_url(t)
+                 for t in load_targets(Path(__file__).resolve().parent.parent / "targets")}
+        self.assertEqual(built, self.EXPECTED)
+
+    def test_the_three_urls_are_distinct(self):
+        self.assertEqual(len(set(self.EXPECTED.values())), 3)

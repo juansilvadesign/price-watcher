@@ -1,5 +1,6 @@
 import base64
 import unittest
+from pathlib import Path
 from unittest import mock
 
 from pricewatch.models import Alert, Reading
@@ -41,9 +42,17 @@ class TestTelegram(unittest.TestCase):
         self.assertEqual(calls, [])
 
     def test_missing_chat_id_fails_at_construction(self):
-        """Not at alert time -- the one message you cared about must not be the one lost."""
-        with self.assertRaises(KeyError):
-            TelegramNotifier(token="TOK", chat_id=None, post=lambda u, p: None)
+        """Not at alert time -- the one message you cared about must not be the one lost.
+
+        Pinned against an EMPTY env on purpose: this test passed for the wrong reason
+        until the real .env gained a chat id, which made it read ambient state.
+        """
+        import os
+        from pricewatch import config
+        with mock.patch.object(config, "DEFAULT_ENV_PATH", Path("/nonexistent/.env")), \
+             mock.patch.dict(os.environ, {}, clear=True):
+            with self.assertRaises(KeyError):
+                TelegramNotifier(token="TOK", chat_id=None, post=lambda u, p: None)
 
 
 class TestWindowsToast(unittest.TestCase):
@@ -75,11 +84,25 @@ class TestWindowsToast(unittest.TestCase):
         self.assertIn("b &amp; c", script)
 
     def test_absent_powershell_is_a_loud_construction_error(self):
-        """Auto-detect finds it on this machine, so absence has to be simulated."""
-        with mock.patch("pricewatch.notify.shutil.which", return_value=None):
+        """Auto-detect finds it on this machine, so absence has to be simulated --
+        both on PATH and at the known Windows locations."""
+        with mock.patch("pricewatch.notify.shutil.which", return_value=None), \
+             mock.patch("pricewatch.notify.os.path.exists", return_value=False):
             with self.assertRaises(NotifyError) as cm:
                 WindowsToastNotifier(runner=lambda a: None, powershell=None)
         self.assertIn("powershell.exe not found", str(cm.exception))
+
+    def test_falls_back_to_a_known_path_when_PATH_lacks_it(self):
+        """The cron regression: cron's PATH is ~/usr/bin:/bin and hides powershell.exe.
+
+        Before this fallback existed, `build()` raised at startup and the entire run
+        aborted -- losing the prices and the Telegram alert along with the toast.
+        """
+        with mock.patch("pricewatch.notify.shutil.which", return_value=None), \
+             mock.patch("pricewatch.notify.os.path.exists",
+                        side_effect=lambda p: p == WindowsToastNotifier.CANDIDATES[0]):
+            n = WindowsToastNotifier(runner=lambda a: None, powershell=None)
+        self.assertEqual(n._ps, WindowsToastNotifier.CANDIDATES[0])
 
     def test_autodetect_is_used_when_powershell_is_not_given(self):
         with mock.patch("pricewatch.notify.shutil.which", return_value="/x/ps.exe"):
@@ -131,3 +154,27 @@ class TestSelection(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestBuildDegradation(unittest.TestCase):
+    """A secondary channel being unavailable must not cost the run."""
+
+    def test_one_broken_sink_warns_and_continues(self):
+        from pricewatch import notify
+        warnings = []
+        with mock.patch.dict(notify.SINKS, {"boom": lambda: (_ for _ in ()).throw(RuntimeError("x"))}):
+            n = notify.build(["console", "boom"], on_warning=warnings.append)
+        self.assertEqual(len(n.sinks), 1)
+        self.assertEqual(len(warnings), 1)
+        self.assertIn("continuing without it", warnings[0])
+
+    def test_losing_every_sink_is_fatal(self):
+        from pricewatch import notify
+        with mock.patch.dict(notify.SINKS, {"boom": lambda: (_ for _ in ()).throw(RuntimeError("x"))}):
+            with self.assertRaises(NotifyError):
+                notify.build(["boom"])
+
+    def test_unknown_sink_name_is_a_key_error(self):
+        from pricewatch import notify
+        with self.assertRaises(KeyError):
+            notify.build(["nope"])
