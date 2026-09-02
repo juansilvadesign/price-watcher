@@ -35,6 +35,13 @@ shared belongs in the harness. If you find yourself putting a site name in
   every run is its own baseline and nothing can ever fire. `watch.py` owns that order.
 - **Rules are edge-triggered.** Level-triggered alerts on a cron schedule train the
   reader to ignore them.
+- **A price below the anomaly floor never becomes a baseline** (`critical_price`).
+  `lowest_ever` has no expiry, so one mispriced row kills it permanently — that is not
+  a hypothetical, it happened on 04/09 with a one-run R$ 66,00. The floor is applied on
+  **read**, so it heals a poisoned history instead of only preventing the next one, and
+  the JSONL keeps the bad row for audit. Anything that reports a baseline to a human —
+  `watch.py`'s "record low so far" line included — must apply the same floor the rules
+  do, or the status line will contradict the rule it summarises.
 - **Zero runtime dependencies.** Standard library only. A personal tool that needs a
   venv rebuilt after six months of not being touched is a tool that stays untouched.
 - **Fixtures are real captured responses**, never hand-written approximations of what

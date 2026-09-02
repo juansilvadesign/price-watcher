@@ -7,6 +7,13 @@ fire. `watch.py` enforces that ordering.
 Every rule is edge-triggered: they fire on a transition, not on a state. A
 level-triggered "still below your ceiling" would re-alert on every cron tick and
 train you to ignore it.
+
+Two kinds of rule live here and they must not be confused. `lowest_ever`,
+`lowest_in_window` and `drop_pct` are RELATIVE: they compare against a baseline
+built from history. `below_threshold` and `critical_price` are ABSOLUTE: they
+compare against a number you wrote down. Only the absolute kind is safe against a
+mispriced reading, which is exactly why `critical_price` owns the anomaly band and
+the relative rules are excluded from it -- see `_anomaly_floor`.
 """
 
 from __future__ import annotations
@@ -20,16 +27,47 @@ def _cheapest(readings: list[Reading]) -> Reading | None:
     return min(readings, key=lambda r: r.price_cents) if readings else None
 
 
+def _anomaly_floor(target) -> int | None:
+    """The `critical_price` ceiling, when that rule is armed -- else None.
+
+    Below this price a reading is treated as anomalous rather than cheap. It is
+    excluded from every baseline (so a one-minute mispricing cannot ratchet
+    `lowest_ever` shut) and the two "is this a new low?" rules stay silent on it,
+    because the band belongs to `critical_price`, which alerts on it immediately.
+
+    Disabling `critical_price` disables the protection with it: one switch, so a
+    target cannot end up alerting on anomalies while still baselining them.
+    """
+    cfg = target.rules.get("critical_price")
+    if not cfg or not cfg.get("enabled", False):
+        return None
+    return cfg.get("price_cents")
+
+
+def _cheapest_legit(readings: list[Reading], floor: int | None) -> Reading | None:
+    """The cheapest reading that is not anomalous.
+
+    ⚠️ Filtering the READINGS, not just the baseline, is load-bearing. Taking the
+    cheapest first and rejecting it if it is sub-floor would mute the rule for the
+    whole run -- so a glitched `Inteira` at R$ 66,00 would hide a genuine new low on
+    `Meia Estudante` sitting right above the floor, for as long as the glitch lasted.
+    """
+    if floor is None:
+        return _cheapest(readings)
+    return _cheapest([r for r in readings if r.price_cents >= floor])
+
+
 def lowest_ever(target, readings, history) -> Alert | None:
     """Fires when this run beats every price ever recorded for the target.
 
     Silent on the very first run: with no prior history every price is trivially a
     record, and an alert that always fires the first time teaches nothing.
     """
-    now = _cheapest(readings)
+    floor = _anomaly_floor(target)
+    now = _cheapest_legit(readings, floor)
     if now is None:
         return None
-    prior = history.min_price_cents(target.id)
+    prior = history.min_price_cents(target.id, floor_cents=floor)
     if prior is None:
         return None
     if now.price_cents < prior:
@@ -142,11 +180,12 @@ def lowest_in_window(target, readings, history) -> Alert | None:
     """
     cfg = target.rules["lowest_in_window"]
     hours = cfg["window_hours"]
-    now = _cheapest(readings)
+    floor = _anomaly_floor(target)
+    now = _cheapest_legit(readings, floor)
     if now is None:
         return None
     cutoff = _dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(hours=hours)
-    prior = history.min_price_cents_since(target.id, cutoff)
+    prior = history.min_price_cents_since(target.id, cutoff, floor_cents=floor)
     if prior is None:
         return None  # no history yet -- silent for the same reason lowest_ever is
     if now.price_cents >= prior:
@@ -159,6 +198,56 @@ def lowest_in_window(target, readings, history) -> Alert | None:
                 f"cheapest in {hours:g}h, beating {fmt_brl(prior)}."),
         reading=now,
     )
+
+
+def critical_price(target, readings, history) -> Alert | None:
+    """Fires immediately when the price falls BELOW X -- the anomaly band.
+
+    The standard rules ask "is this a new low?" against a baseline. That question is
+    the wrong one for a price so far below the market that it is probably a listing
+    error: it is worth knowing about *now*, and it must never become the baseline.
+    Both halves matter, and the second is the one that bites. On 2026-09-02 a single
+    R$ 66,00 `Gramado || Inteira` -- one run, gone the next minute -- set the
+    `lowest_ever` record for 04/09. That record has no expiry, so the rule was
+    permanently dead on the night it was built for, and the 6h window was muted with
+    it. See `_anomaly_floor` for the exclusion that prevents the repeat.
+
+    Cadence: fires on ENTERING the band, then again on each new low inside it, and
+    stays silent while a sub-floor price merely holds. Still edge-triggered, so a
+    stuck mispricing does not alert once a minute forever -- but a market genuinely
+    falling through the floor is reported the whole way down.
+    """
+    cfg = target.rules["critical_price"]
+    floor = cfg["price_cents"]
+    now = _cheapest(readings)                 # the true cheapest -- anomalies included
+    if now is None or now.price_cents >= floor:
+        return None
+
+    prev = history.last_run_min_cents(target.id)
+    if prev is not None and prev < floor and now.price_cents >= prev:
+        # Already in the band and not a new low: the entry alert has been sent and
+        # nothing has improved since.
+        return None
+
+    entering = prev is None or prev >= floor
+    why = "is below" if entering else "is a new low below"
+    return Alert(
+        target_id=target.id,
+        rule="critical_price",
+        headline=f"CRITICAL {fmt_brl(now.price_cents)} — under {fmt_brl(floor)}",
+        detail=(f"{now.item} at {fmt_brl(now.price_cents)} (qty {now.quantity}) "
+                f"{why} the anomaly floor of {fmt_brl(floor)}. Verify before acting "
+                f"— this far under market is often a listing error, and it is "
+                f"deliberately excluded from every baseline."),
+        reading=now,
+    )
+
+
+def _validate_price_cents(cfg: dict) -> str | None:
+    p = cfg.get("price_cents")
+    if not isinstance(p, int) or isinstance(p, bool) or p <= 0:
+        return f"price_cents must be a positive integer, got {p!r}"
+    return None
 
 
 def _validate_window_hours(cfg: dict) -> str | None:
@@ -187,6 +276,7 @@ RULES = {
     "drop_pct":         (drop_pct,         ("pct",),           None),
     "price_changed":    (price_changed,    ("direction",),     _validate_direction),
     "lowest_in_window": (lowest_in_window, ("window_hours",),  _validate_window_hours),
+    "critical_price":   (critical_price,   ("price_cents",),   _validate_price_cents),
 }
 
 

@@ -21,6 +21,10 @@
   },
   "_note_rules": "lowest_ever AND lowest_in_window are enabled (Juan, 2026-09-01). lowest_ever ratchets shut -- every record it sets raises its own bar, so it is quietest on the day you actually buy, which is the day it matters. On 2026-09-01 05/09 was trading at R$ 330,00 against a R$ 242,00 record: a 26.7% fall before it would say anything. lowest_in_window has an expiring baseline instead, so it still flags today's dip. 6h is chosen to span a buying session without carrying yesterday into it. below_threshold, drop_pct and price_changed stay configured but disabled; below_threshold's price_brl is the last re-baselined value and is stale by design.",
   "rules": {
+    "critical_price": {
+      "enabled": true,
+      "price_brl": 200.0
+    },
     "lowest_ever": {
       "enabled": true
     },
@@ -41,5 +45,6 @@
       "direction": "any",
       "min_delta_brl": 0.01
     }
-  }
+  },
+  "_note_critical_price": "critical_price is the anomaly floor, and it does TWO jobs from one number. (1) Any price under it alerts immediately -- on entering the band and on each new low inside it -- bypassing the 6h window entirely. (2) Nothing under it ever becomes a baseline for lowest_ever or lowest_in_window, so a mispricing cannot ratchet them shut. This is not hypothetical: on 2026-09-02T13:46Z a single R$ 66,00 Gramado || Inteira, present for one run and gone the next minute, took the lowest_ever record on 04/09 -- which has no expiry, so the rule was permanently dead on the night it was built for. X is set just under this night's observed floor (R$ 220,00), because a price that far below trading range is far more likely to be a listing error than a deal. The exclusion is applied on READ, so arming this heals a history that is already poisoned."
 }

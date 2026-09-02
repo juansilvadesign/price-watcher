@@ -83,7 +83,13 @@ def run_target(target, history, notifier, dry_run: bool, verbose: bool) -> str:
             print(f"  DELIVERY FAILED: {e}", file=sys.stderr)
             return "delivery"
     else:
-        prior = history.min_price_cents(target.id)
+        # The floor must be passed here too. Without it this line reports the raw
+        # all-time minimum while the rules compare against the floored one -- so a
+        # mispriced row would show as "record low so far R$ 66,00" on a night whose
+        # rules are actually working off R$ 220,00. A status line that disagrees with
+        # the rule it summarises is worse than no status line: it is the number a
+        # human reads at 2am before deciding whether to trust the silence.
+        prior = history.min_price_cents(target.id, floor_cents=rules._anomaly_floor(target))
         note = f"record low so far {fmt_brl(prior)}" if prior is not None else "baseline established"
         print(f"  no alerts ({note})")
     return "ok"

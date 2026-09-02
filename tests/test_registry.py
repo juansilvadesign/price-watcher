@@ -150,3 +150,45 @@ class TestWindowRuleValidation(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestCriticalPriceConfig(unittest.TestCase):
+    """`critical_price` goes through the same BRL door as `below_threshold`."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.dir = Path(self.tmp.name)
+        self.addCleanup(self.tmp.cleanup)
+
+    def write(self, cfg):
+        base = dict(VALID)
+        base["rules"] = {"critical_price": cfg}
+        p = self.dir / "x.json"
+        p.write_text(json.dumps(base), encoding="utf-8")
+        return p
+
+    def test_brl_floor_becomes_centavos(self):
+        t = load_target(self.write({"enabled": True, "price_brl": 200.0}))
+        self.assertEqual(t.rules["critical_price"]["price_cents"], 20000)
+        self.assertNotIn("price_brl", t.rules["critical_price"])
+
+    def test_enabled_without_a_price_refuses_to_load(self):
+        with self.assertRaises(ConfigError):
+            load_target(self.write({"enabled": True}))
+
+    def test_a_bare_true_is_rejected_not_read_as_one_real(self):
+        """`isinstance(True, int)` is True, so `price_brl: true` would otherwise
+        convert to R$ 1,00 — a floor that reads as armed and matches nothing. It has
+        to be caught before conversion; afterwards it is an ordinary 100."""
+        with self.assertRaises(ConfigError):
+            load_target(self.write({"enabled": True, "price_brl": True}))
+
+    def test_zero_and_negative_floors_are_rejected(self):
+        for bad in (0, -5):
+            with self.subTest(price_brl=bad), self.assertRaises(ConfigError):
+                load_target(self.write({"enabled": True, "price_brl": bad}))
+
+    def test_a_disabled_floor_still_converts_but_never_validates(self):
+        """Mirrors below_threshold: a disabled rule keeps its value for later."""
+        t = load_target(self.write({"enabled": False, "price_brl": 200.0}))
+        self.assertEqual(t.rules["critical_price"]["price_cents"], 20000)

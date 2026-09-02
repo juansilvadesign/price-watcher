@@ -70,12 +70,36 @@ class History:
             return False
         return self.append(target_id, readings) > 0
 
-    def min_price_cents(self, target_id: str) -> int | None:
-        """Cheapest price ever recorded for this target, or None if no history."""
-        prices = [r["price_cents"] for r in self.load(target_id) if r.get("price_cents") is not None]
+    @staticmethod
+    def _prices(rows: list[dict], floor_cents: int | None) -> list[int]:
+        """Baseline-eligible prices from `rows`.
+
+        ⭐ The anomaly floor is applied HERE, on read, and deliberately not at write
+        time. Two reasons, and the first is why it matters today:
+
+        1. It heals retroactively. A mispriced row already on disk stops being a
+           baseline the moment a floor is configured. Dropping anomalies at ingest
+           would leave every poisoned history poisoned for good -- and `lowest_ever`
+           has no expiry, so "for good" is literal.
+        2. The JSONL stays a faithful record of what the site actually served. The
+           R$ 66,00 on 04/09 really was published; a history that quietly omits it
+           cannot be audited, and the next person would rediscover it the hard way.
+        """
+        return [r["price_cents"] for r in rows
+                if r.get("price_cents") is not None
+                and (floor_cents is None or r["price_cents"] >= floor_cents)]
+
+    def min_price_cents(self, target_id: str, floor_cents: int | None = None) -> int | None:
+        """Cheapest price ever recorded for this target, or None if no history.
+
+        `floor_cents` excludes anomalous readings from the baseline -- see
+        `_prices` for why that exclusion happens on READ and not on write.
+        """
+        prices = self._prices(self.load(target_id), floor_cents)
         return min(prices) if prices else None
 
-    def min_price_cents_since(self, target_id: str, cutoff: _dt.datetime) -> int | None:
+    def min_price_cents_since(self, target_id: str, cutoff: _dt.datetime,
+                              floor_cents: int | None = None) -> int | None:
         """Cheapest price standing at any point in [cutoff, now], or None if no history.
 
         ⚠️ The load-bearing subtlety is `append_if_changed`: this file is a **change
@@ -87,7 +111,9 @@ class History:
 
         So the last run recorded strictly BEFORE the cutoff is carried forward into the
         window: under change-log semantics that price was still standing when the
-        window opened.
+        window opened. With a `floor_cents` set, sub-floor rows are dropped before that
+        scan, so what is carried forward is the last *legitimate* standing price --
+        an anomaly cannot become the baseline simply by being the newest row.
 
         ⭐ That carry-forward does a second job, and it is why this cannot be a naive
         window query. Without it a price that never moves would re-fire a window rule
@@ -102,7 +128,7 @@ class History:
 
         for r in self.load(target_id):
             price = r.get("price_cents")
-            if price is None:
+            if price is None or (floor_cents is not None and price < floor_cents):
                 continue
             ts = _dt.datetime.fromisoformat(r["captured_at"])
             if ts >= cutoff:

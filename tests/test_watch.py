@@ -18,6 +18,7 @@ from pathlib import Path
 
 import watch
 from pricewatch import adapters
+from pricewatch.history import History
 from pricewatch.models import Reading
 
 
@@ -51,10 +52,10 @@ class _WatchCase(unittest.TestCase):
         self.targets.mkdir()
         self.history.mkdir()
 
-    def write_target(self, tid, filters):
+    def write_target(self, tid, filters, rules=None):
         (self.targets / f"{tid}.json").write_text(json.dumps({
             "id": tid, "label": f"label {tid}", "adapter": "stub",
-            "params": {}, "filters": filters, "rules": {}, "enabled": True,
+            "params": {}, "filters": filters, "rules": rules or {}, "enabled": True,
         }), encoding="utf-8")
 
     def run_watch(self):
@@ -120,3 +121,44 @@ class TestAnEmptyNightIsNotAConfigError(_WatchCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestTheStatusLineAgreesWithTheRuleItSummarises(_WatchCase):
+    """"record low so far ..." must be computed with the anomaly floor the rules use.
+
+    Without the floor this line reports the raw all-time minimum while the rules
+    compare against the floored one. On 04/09 that meant the log would have said
+    "record low so far R$ 66,00" on a night whose rules were working off R$ 220,00 --
+    and this is the number a human reads at 2am to decide whether the silence is
+    trustworthy. A status line that disagrees with its rule is worse than none.
+    """
+
+    FILTERS = {"extra": {"sector": ["Gramado"]}}
+    RULES = {"critical_price": {"enabled": True, "price_brl": 200.0},
+             "lowest_ever": {"enabled": True}}
+
+    def seed_glitched_history(self, tid):
+        h = History(self.history)
+        for i, cents in enumerate((22000, 6600)):       # healthy, then the mispricing
+            r = _reading(tid, cents=cents)
+            h.append(tid, [Reading(**{**r.__dict__,
+                                      "captured_at": f"2026-09-0{i + 1}T00:00:00+00:00"})])
+
+    def test_the_note_reports_the_floored_baseline(self):
+        self.write_target("t", self.FILTERS, self.RULES)
+        self.seed_glitched_history("t")
+        _StubAdapter.ROWS = {"t": [_reading("t", cents=27500)]}
+        rc, out, _ = self.run_watch()
+        self.assertEqual(rc, 0)
+        self.assertIn("record low so far R$ 220,00", out)
+        self.assertNotIn("R$ 66,00", out)
+
+    def test_known_bad_leg_without_a_floor_the_glitch_is_still_the_record(self):
+        """Same history, `critical_price` disarmed: the note correctly reverts to the
+        raw minimum. Pins that the fix is the floor and not a hardcoded number."""
+        self.write_target("t", self.FILTERS, {"lowest_ever": {"enabled": True}})
+        self.seed_glitched_history("t")
+        _StubAdapter.ROWS = {"t": [_reading("t", cents=27500)]}
+        rc, out, _ = self.run_watch()
+        self.assertEqual(rc, 0)
+        self.assertIn("record low so far R$ 66,00", out)

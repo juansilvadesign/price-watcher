@@ -23,6 +23,10 @@
   },
   "_note_rules": "ONLY lowest_ever is enabled. lowest_in_window is configured but DISABLED here: these are tracking nights, not nights Juan would buy, so an expiring-baseline rule would add alerts he cannot act on. Flip `enabled` to arm it.",
   "rules": {
+    "critical_price": {
+      "enabled": true,
+      "price_brl": 450.0
+    },
     "lowest_ever": {
       "enabled": true
     },
@@ -43,5 +47,6 @@
       "direction": "any",
       "min_delta_brl": 0.01
     }
-  }
+  },
+  "_note_critical_price": "critical_price is the anomaly floor, and it does TWO jobs from one number. (1) Any price under it alerts immediately -- on entering the band and on each new low inside it -- bypassing the 6h window entirely. (2) Nothing under it ever becomes a baseline for lowest_ever or lowest_in_window, so a mispricing cannot ratchet them shut. This is not hypothetical: on 2026-09-02T13:46Z a single R$ 66,00 Gramado || Inteira, present for one run and gone the next minute, took the lowest_ever record on 04/09 -- which has no expiry, so the rule was permanently dead on the night it was built for. X is set just under this night's observed floor (R$ 550,00), because a price that far below trading range is far more likely to be a listing error than a deal. The exclusion is applied on READ, so arming this heals a history that is already poisoned."
 }

@@ -138,10 +138,11 @@ so a cron job does not re-alert every tick and train you to ignore it.
 | `drop_pct` | the cheapest fell ≥ N% since the previous run | `pct` |
 | `price_changed` | the cheapest moved **at all** since the previous run | `direction` (`any`/`down`/`up`), optional `min_delta_brl` |
 | `lowest_in_window` | this run beats everything standing in the last N hours | `window_hours` |
+| `critical_price` | the price is **below** your anomaly floor — on entering the band, then on each new low inside it | `price_brl` |
 
-**As shipped, `lowest_ever` is armed everywhere and `lowest_in_window` on the three
-nights you would actually buy.** The rest are configured but disabled — flip `enabled`
-to re-arm one.
+**As shipped, `lowest_ever` and `critical_price` are armed everywhere, and
+`lowest_in_window` on the three nights you would actually buy.** The rest are
+configured but disabled — flip `enabled` to re-arm one.
 
 ⭐ **Why both.** `lowest_ever` **ratchets shut**: every record it sets raises its own
 bar, so the longer it runs the less likely it is to speak — and the day you buy is the
@@ -168,6 +169,46 @@ rejected at load time, not silently ignored.
 A rule enabled without its parameter **refuses to load**. An enabled rule that can
 never fire looks identical to a healthy one, and you would only find out by never
 getting an alert.
+
+### 🔴 `critical_price` — the anomaly floor, and why it is not just another threshold
+
+Two rules here are **absolute** (`below_threshold`, `critical_price`): they compare
+against a number you wrote down. The other three are **relative**: they compare against
+a baseline built from history. Only the absolute kind is safe against a mispriced
+reading — which is the entire reason this rule exists.
+
+`critical_price` does **two jobs from one number**:
+
+1. **Alerts immediately** on any price below the floor, bypassing the 6h window. It
+   fires on *entering* the band and again on each *new low inside* it, then stays quiet
+   while a sub-floor price merely holds. A market falling through the floor is reported
+   the whole way down; a stuck mispricing does not alert once a minute forever.
+2. **Excludes that price from every baseline.** Nothing below the floor can become the
+   reference for `lowest_ever` or `lowest_in_window`, so an atypical discount cannot
+   mute the normal drop alerts that follow it.
+
+⛔ **The second job is the one that bites, and it is not hypothetical.** On
+**2026-09-02T13:46Z** a single `Gramado || Inteira` at **R$ 66,00** — present for one
+run, gone the next minute, on a night trading at R$ 220,00 — took the `lowest_ever`
+record for 04/09. `lowest_ever` has **no expiry**, so the rule was *permanently dead on
+the night it was built for*, and the 6h window was muted alongside it for six hours.
+Both rules were armed, both looked healthy, and neither could ever have spoken again.
+
+⭐ **The exclusion is applied on READ, not on write.** Two consequences, and the first
+is why it was done that way: it **heals retroactively**, so arming the floor repairs a
+history that is already poisoned (04/09's baseline went straight back to R$ 220,00). And
+the JSONL stays a faithful record of what the site actually served — a history that
+quietly omits the bad row cannot be audited.
+
+⭐ **Set the floor just under the night's observed trading floor**, not at a price you
+would like to pay. It answers "is this too cheap to be real?", not "is this a good
+deal?" — a genuine bargain is what `lowest_in_window` is for. As shipped: R$ 200,00 on
+the three buy nights (observed lows R$ 214,50–242,00), and R$ 250,00 / R$ 350,00 /
+R$ 450,00 on the tracking nights, which trade two to three times higher. Replayed over
+~1,100 recorded runs across all seven targets, it fires **once** — on the real R$ 66,00.
+
+⚠️ Disabling `critical_price` disables the baseline protection with it. One switch, on
+purpose: a target must never end up alerting on anomalies while still baselining them.
 
 ## Adding a site
 

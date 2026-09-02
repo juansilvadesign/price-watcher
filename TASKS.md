@@ -165,6 +165,57 @@ he is only tracking.
       defect v1.4 fixed in `test_buyticketbrasil.py`.
 - [x] 101 → **114 tests**, still fully offline.
 
+## Done — v1.7 (2026-09-02)
+
+- [x] ✅ **`lowest_in_window` CONFIRMED firing in production — 7 times, not a probe.**
+      `grep -a '6h LOW' history/cron.log` returns 7 real cron fires between
+      `2026-09-02T01:42Z` and `13:46Z` (09-04 ×4, 09-05 ×2, 09-11 ×1). Verified
+      independently rather than taken from the log: replaying the real rule over the
+      production JSONL predicts **10** fires across the full 19.7h of history, and the
+      3 extras all fall **before the rule was armed** (targets written
+      `2026-09-01 22:17:35 -03` = `01:17:35Z`). Eligible after arming = 7. Actual = 7,
+      matching on both price and baseline in every row. ⛔ The open item said "a probe
+      is not a production fire" — this is the production fire.
+- [x] ✅ **Delivery verified too.** All 5 `DELIVERY FAILED` lines name `toast:` only
+      (WSL `accept4` vsock errors). `MultiNotifier` attempts every sink before raising,
+      so Telegram was never blocked and never failed.
+- [x] 🔴 **Found: a one-run R$ 66,00 had already killed 04/09.** `Gramado || Inteira`
+      at R$ 66,00 appeared for **exactly one run** (`13:46:04Z`), on the same qty-235
+      listing that was R$ 220,00 the minute before and R$ 275,00 the minute after. It
+      took the `lowest_ever` record — which has **no expiry** — so on the primary buy
+      night, two days out, *both* armed rules required a price under R$ 66,00 to speak.
+      A genuine drop to R$ 180,00 would have produced nothing. Both rules looked healthy.
+- [x] ✅ **New rule `critical_price` — the anomaly floor.** Two jobs from one number:
+      alert immediately on any price below it (bypassing the window), and never let
+      such a price become a baseline for `lowest_ever` / `lowest_in_window`.
+      Cadence by Juan's call: **on entering the band, then on each new low inside it**,
+      silent while a sub-floor price merely holds. Armed on **all seven** nights —
+      it is a data-quality guard as much as an alert, and a tracking night runs
+      `lowest_ever` too. Per-target X, just under each night's observed floor:
+      R$ 200,00 on 04/05/11 · R$ 250,00 on 13 · R$ 350,00 on 07/12 · R$ 450,00 on 06.
+- [x] ⭐ **The exclusion is applied on READ, not on write** — so it **heals
+      retroactively**. 04/09's baselines went straight back to R$ 220,00 from R$ 66,00
+      the moment the floor was armed; the other six targets did not move, which is the
+      control that the floors are not eating legitimate data. Dropping anomalies at
+      ingest would have left every already-poisoned history poisoned for good, and
+      `lowest_ever` has no expiry, so "for good" is literal. The JSONL keeps the bad
+      row for audit.
+- [x] 🔴 **Fixed alongside it: the status line contradicted its own rule.**
+      `watch.py` computed "record low so far" with an unfloored `min_price_cents`, so
+      04/09 printed `R$ 66,00` while the rules were working off `R$ 220,00`. That is
+      the number a human reads at 2am to decide whether the silence is trustworthy.
+      Pinned by a test plus a known-bad leg with the floor disarmed.
+- [x] ✅ **114 → 141 tests**, all offline. The new guards are mutation-proven: three
+      separate reverts (`_anomaly_floor` → `None`, `_cheapest_legit` ignoring the floor,
+      `critical_price` losing its in-band cadence guard) each fail the intended legs
+      first — 6, 4 and 2 failures respectively — and the source restored byte-identical.
+- [x] ⭐ **Replayed over ~1,100 recorded runs across all 7 targets, `critical_price`
+      fires exactly once** — on the real R$ 66,00. Zero false positives at these floors.
+- [x] ⚠️ **A bare `true` in `price_brl` is now rejected at load.** `isinstance(True, int)`
+      is True, so it would have converted to R$ 1,00 — a floor that reads as armed and
+      matches nothing. Caught before conversion; afterwards it is an ordinary `100` and
+      no later validator can see it. Same trap `_validate_window_hours` already guards.
+
 ## Next — in priority order
 - [x] ✅ **Alert volume: MEASURED, not guessed — and it is not the problem.** Over the
       first **329 cron runs** the armed rules fired **6 times (1,8 %)**. The *floor*
@@ -177,12 +228,18 @@ he is only tracking.
       already runs under systemd here; n8n would add a Docker dependency, its own
       gotcha corpus, and could not drive the Windows toast sink. Revisit only if cron
       proves unreliable.
-- [ ] ⚠️ **`lowest_in_window` is near-degenerate until the history outgrows the window.**
-      With ~7h of log and a 6h window it is very nearly `lowest_ever` under another
-      name. Measured 2026-09-01: the 6h baseline equalled the all-time baseline on all
-      **7** targets. That is the instrument reading its own youth, not a finding — see
-      [[feedback_identical_values_across_items_measure_the_instrument]]. It becomes
-      genuinely selective as the log ages; by 04/09 there will be ~3 days of it.
+- [x] ✅ **`lowest_in_window` has outgrown the window — no longer degenerate.**
+      On 2026-09-01, with ~7h of log against a 6h window, the two baselines were
+      identical on all **7** targets: the instrument reading its own youth, not a
+      finding ([[feedback_identical_values_across_items_measure_the_instrument]]).
+      Re-measured 2026-09-02 with ~20h of log, they now **diverge on 5 of 7**
+      (09-05 242,00 vs 245,30 · 09-07 368,50 vs 385,00 · 09-11 214,50 vs 242,00 ·
+      09-12 478,50 vs 489,50 · 09-13 275,00 vs 324,50). The rule is genuinely
+      selective, and the 7 production fires are the behavioural confirmation.
+- [ ] ⚠️ **Re-measure alert volume now that a second rule is armed everywhere.**
+      `critical_price` replayed over ~1,100 runs fires once, so it adds ~nothing at
+      these floors — but that is a backward-looking number on 20h of history, and the
+      buy nights are the volatile ones. Check the rate again after 04/09.
 - [ ] 🔴 **A new target file is no longer enough.** Since the cadence split, both cron
       lines name their targets with `--only`, so a target in `targets/` that is in
       neither list is never polled — while `--list` still shows it `[on ]`. Add the id
@@ -201,10 +258,21 @@ he is only tracking.
       untested against the live site. Expected: `matriz_preco` empty → `[]` → "nothing
       on sale", no alert, no crash. Expected, not observed — and note that the three
       box-office sell-outs did **not** produce it, so they are not the test case.
-- [x] ✅ **RESOLVED v1.5 — the empty read no longer crashes the run.** It was two
-      defects, not one: the vacuous `any()` in `filters.py` made `[]` fatal, and
-      `watch.py`'s catch sat outside the loop so *any* `FilterError` was contagious.
-      Both are fixed and pinned by tests that failed first on the old code. What is
-      still **unobserved** is the thing underneath: no live target has ever actually
-      returned `[]`, because the three box-office sell-outs are the *fullest* pages
-      here. The empty path is now proven against a stub, not against this site.
+- [x] ✅✅ **RESOLVED v1.5, and OBSERVED LIVE v1.7 — twice, on both sides of the fix.**
+      The fix was two defects, not one: the vacuous `any()` in `filters.py` made `[]`
+      fatal, and `watch.py`'s catch sat outside the loop so *any* `FilterError` was
+      contagious. Both are pinned by tests that failed first on the old code.
+      ⛔ **The old note here — "no live target has ever actually returned `[]`" — is
+      wrong and has been corrected.** It happened twice:
+      ① **Pre-fix**, at `history/cron.log:1078`: `rockinrio2026-09-11` returned 0
+      readings and aborted the run. Provably pre-fix from its format — the current code
+      prints `  CONFIG ERROR:` (indented, from `run_target`), while that line reads
+      `config error:` and carries a `FilterError` message that `load_targets` never
+      raises. That combination is unreachable in the code as it stands.
+      ② **Post-fix**, 2026-09-02 ~14:10Z, same target: `0 listings seen` →
+      *"nothing on sale matching this target's filters"*, exit **0**, no crash.
+      ⚠️ It was **transient** — 10/10 immediate re-probes returned 21 rows, and the raw
+      payload during the outage had `matriz_preco` present with data, so the site
+      briefly served an empty matriz. Under the invariant that reads as "sold out", and
+      the cost is one skipped run per occurrence at a one-minute poll. ⛔ Do not treat
+      a single `[]` here as a sold-out signal without a re-probe.

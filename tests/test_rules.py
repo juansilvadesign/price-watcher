@@ -187,6 +187,10 @@ class TestSuccessiveNewLows(RuleCase):
         `lowest_in_window` is armed ONLY on the three nights Juan would actually buy;
         on a tracking night it would only add alerts he cannot act on. Everything else
         stays off — that was an explicit call, not an oversight.
+
+        `critical_price` is the exception to the buy-night split: it is armed on ALL
+        seven. It is a data-quality guard as much as an alert, and a tracking night
+        runs `lowest_ever`, which one mispriced row kills permanently.
         """
         from pathlib import Path
         from pricewatch.registry import load_targets
@@ -194,8 +198,8 @@ class TestSuccessiveNewLows(RuleCase):
         seen = set()
         for t in load_targets(Path(__file__).resolve().parent.parent / "targets"):
             armed = sorted(n for n, c in t.rules.items() if c.get("enabled"))
-            expected = (["lowest_ever", "lowest_in_window"] if t.id in BUY
-                        else ["lowest_ever"])
+            expected = (["critical_price", "lowest_ever", "lowest_in_window"] if t.id in BUY
+                        else ["critical_price", "lowest_ever"])
             self.assertEqual(armed, expected, f"{t.id} has {armed} armed")
             seen.add(t.id)
         # Without this the buy-night branch goes vacuous the moment an id is renamed,
@@ -312,3 +316,216 @@ class TestLowestInWindow(RuleCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestCriticalPrice(RuleCase):
+    """The anomaly band: alert immediately, and never let it become a baseline.
+
+    Cadence is "once on entering the band, then again on each new low inside it".
+    Not level-triggered (a stuck mispricing would alert once a minute forever) and
+    not once-only (a market genuinely falling through the floor should be reported
+    the whole way down).
+    """
+
+    FLOOR = 20000  # R$ 200,00 -- the value armed on the three buy nights
+
+    def target(self, floor=None, **extra):
+        cfg = {"critical_price": {"enabled": True,
+                                  "price_cents": self.FLOOR if floor is None else floor}}
+        cfg.update(extra)
+        return make_target(rules=cfg)
+
+    # --- cadence ---------------------------------------------------------------
+    def test_fires_on_entering_the_band(self):
+        self.seed((27500,), (22000,))
+        self.assertIsNotNone(rules.critical_price(self.target(), [reading(6600)], self.history))
+
+    def test_fires_again_on_a_new_low_inside_the_band(self):
+        self.seed((22000,), (18000,))
+        self.assertIsNotNone(rules.critical_price(self.target(), [reading(17500)], self.history))
+
+    def test_silent_while_a_sub_floor_price_merely_holds(self):
+        self.seed((27500,), (18000,))
+        self.assertIsNone(rules.critical_price(self.target(), [reading(18000)], self.history))
+
+    def test_silent_on_a_rise_that_stays_inside_the_band(self):
+        self.seed((27500,), (17000,))
+        self.assertIsNone(rules.critical_price(self.target(), [reading(17800)], self.history))
+
+    def test_silent_above_the_floor(self):
+        self.seed((27500,))
+        self.assertIsNone(rules.critical_price(self.target(), [reading(22000)], self.history))
+
+    def test_exactly_at_the_floor_is_not_below_it(self):
+        self.seed((27500,))
+        self.assertIsNone(rules.critical_price(self.target(), [reading(self.FLOOR)], self.history))
+
+    def test_fires_on_the_very_first_run(self):
+        """Deliberately unlike `lowest_ever`, which is silent on run one.
+
+        That silence exists because with no history every price is trivially a record.
+        Nothing vacuous happens here: the floor is an absolute number a human wrote
+        down, so the first reading to cross it has crossed it.
+        """
+        self.assertIsNotNone(rules.critical_price(self.target(), [reading(6600)], self.history))
+
+    def test_it_re_arms_after_the_price_leaves_the_band(self):
+        self.seed((27500,), (18000,), (26000,))
+        self.assertIsNotNone(rules.critical_price(self.target(), [reading(19000)], self.history))
+
+
+class TestAnomalyFloorExclusion(RuleCase):
+    """A sub-floor reading must never become a baseline.
+
+    This is the half that bites. `lowest_ever` has no expiry, so ONE bad row kills it
+    for good -- which is not hypothetical: see the verbatim 04/09 leg below.
+    """
+
+    FLOOR = 20000
+
+    def armed(self, **extra):
+        cfg = {"critical_price": {"enabled": True, "price_cents": self.FLOOR},
+               "lowest_ever": {"enabled": True}}
+        cfg.update(extra)
+        return make_target(rules=cfg)
+
+    def unarmed(self):
+        return make_target(rules={"lowest_ever": {"enabled": True}})
+
+    def seed_at(self, *runs):
+        for hours_ago, price in runs:
+            ts = (_dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(hours=hours_ago)
+                  ).replace(microsecond=0).isoformat()
+            self.history.append("t1", [reading(price, ts)])
+
+    # --- known-bad leg: the real 04/09 poisoning -------------------------------
+    def test_known_bad_leg_one_glitched_row_kills_lowest_ever_for_good(self):
+        """Production, 2026-09-02: R$ 220,00 -> R$ 66,00 (one run) -> R$ 275,00.
+
+        With no floor the R$ 66,00 is the all-time record, and because `lowest_ever`
+        never expires, a genuine R$ 210,00 two days later -- a real new low against a
+        R$ 220,00 market -- says nothing at all. This leg FAILS on the fixed source
+        only if the exclusion is removed; it is here to pin that, not to pass quietly.
+        """
+        self.seed((22000,), (6600,), (27500,))
+        self.assertIsNone(
+            rules.lowest_ever(self.unarmed(), [reading(21000)], self.history),
+            "unarmed: R$ 66,00 holds the record, so a real R$ 210,00 is silent")
+
+    def test_the_floor_restores_it(self):
+        """Same history, same reading, floor armed. Pairs with the leg above so the
+        exclusion cannot simply be muting the rule."""
+        self.seed((22000,), (6600,), (27500,))
+        self.assertIsNotNone(rules.lowest_ever(self.armed(), [reading(21000)], self.history))
+
+    def test_the_exclusion_heals_retroactively(self):
+        """Applied on read, so a history already carrying the bad row recovers the
+        moment the floor is configured -- no rewrite of the JSONL, no data loss."""
+        self.seed((22000,), (6600,))
+        self.assertEqual(self.history.min_price_cents("t1"), 6600)
+        self.assertEqual(self.history.min_price_cents("t1", floor_cents=self.FLOOR), 22000)
+
+    # --- the readings are filtered, not just the baseline ----------------------
+    def test_an_anomaly_does_not_hide_a_real_new_low_in_the_same_run(self):
+        """A glitched `Inteira` and a genuine `Meia Estudante` in one run.
+
+        Taking the cheapest first and rejecting it when sub-floor would mute the whole
+        run, hiding the real low for as long as the glitch lasted.
+        """
+        self.seed((22000,))
+        run = [reading(6600, item="Gramado || Inteira"),
+               reading(21000, item="Gramado || Meia Estudante")]
+        alert = rules.lowest_ever(self.armed(), run, self.history)
+        self.assertIsNotNone(alert)
+        self.assertEqual(alert.reading.price_cents, 21000)
+        self.assertEqual(alert.reading.item, "Gramado || Meia Estudante")
+
+    def test_silent_when_every_reading_in_the_run_is_sub_floor(self):
+        self.seed((22000,))
+        run = [reading(6600), reading(7000)]
+        self.assertIsNone(rules.lowest_ever(self.armed(), run, self.history))
+
+    # --- the band belongs to critical_price ------------------------------------
+    def test_relative_rules_stay_silent_inside_the_band(self):
+        """Without this the exclusion alone would level-trigger `lowest_in_window`.
+
+        Sub-floor rows never enter the baseline, so the baseline stays at the last
+        legitimate price and EVERY sub-floor run satisfies `now < prior` -- an alert
+        every minute for as long as the mispricing stands. Handing the band to
+        `critical_price` is what keeps the chosen cadence honest.
+        """
+        self.seed_at((3, 27500))
+        t = make_target(rules={"critical_price": {"enabled": True, "price_cents": self.FLOOR},
+                               "lowest_in_window": {"enabled": True, "window_hours": 6}})
+        self.assertIsNone(rules.lowest_in_window(t, [reading(6600)], self.history))
+
+    def test_control_the_same_shape_just_above_the_floor_still_fires(self):
+        """Pairs with the leg above: the band is silenced, not the rule."""
+        self.seed_at((3, 27500))
+        t = make_target(rules={"critical_price": {"enabled": True, "price_cents": self.FLOOR},
+                               "lowest_in_window": {"enabled": True, "window_hours": 6}})
+        self.assertIsNotNone(rules.lowest_in_window(t, [reading(20500)], self.history))
+
+    def test_window_baseline_ignores_a_sub_floor_row(self):
+        self.seed_at((3, 27500), (2, 6600))
+        t = make_target(rules={"critical_price": {"enabled": True, "price_cents": self.FLOOR},
+                               "lowest_in_window": {"enabled": True, "window_hours": 6}})
+        self.assertIsNotNone(rules.lowest_in_window(t, [reading(26000)], self.history),
+                             "the R$ 66,00 must not have become the window's low")
+
+    def test_carry_forward_skips_a_sub_floor_row_for_the_standing_price(self):
+        """The row carried into an empty window must be the last LEGITIMATE one."""
+        self.seed_at((30, 27500), (29, 6600))
+        self.assertEqual(
+            self.history.min_price_cents_since(
+                "t1", _dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(hours=6),
+                floor_cents=self.FLOOR),
+            27500)
+
+    # --- one switch ------------------------------------------------------------
+    def test_disabling_critical_price_disables_the_protection_with_it(self):
+        """One switch on purpose: a target must not alert on anomalies while still
+        baselining them, nor the reverse."""
+        self.seed((22000,), (6600,))
+        t = make_target(rules={"critical_price": {"enabled": False, "price_cents": self.FLOOR},
+                               "lowest_ever": {"enabled": True}})
+        self.assertIsNone(rules._anomaly_floor(t))
+        self.assertIsNone(rules.lowest_ever(t, [reading(21000)], self.history))
+
+
+class TestCriticalPriceEndToEnd(RuleCase):
+    """`evaluate()` over the real 04/09 sequence, one run at a time."""
+
+    def test_the_04_09_sequence_alerts_once_and_keeps_the_baseline(self):
+        t = make_target(rules={"critical_price": {"enabled": True, "price_cents": 20000},
+                               "lowest_ever": {"enabled": True}})
+        self.seed((27500,), (22000,))          # market at R$ 275,00 then R$ 220,00
+
+        fired = rules.evaluate(t, [reading(6600)], self.history)
+        self.assertEqual([a.rule for a in fired], ["critical_price"],
+                         "the glitch alerts, and ONLY through the absolute rule")
+        self.history.append("t1", [reading(6600, ts="2026-08-25T00:00:00+00:00")])
+
+        # next minute: back to R$ 275,00, nothing to say
+        self.assertEqual(rules.evaluate(t, [reading(27500)], self.history), [])
+
+        # and the baseline survived -- a genuine R$ 210,00 still speaks
+        self.assertEqual([a.rule for a in rules.evaluate(t, [reading(21000)], self.history)],
+                         ["lowest_ever"])
+
+
+class TestShippedTargetsArmTheFloor(unittest.TestCase):
+    def test_every_shipped_target_arms_critical_price(self):
+        """An unarmed target is one bad row away from a permanently dead `lowest_ever`,
+        so the floor is not optional on a live watch."""
+        from pricewatch.registry import load_targets
+        root = Path(__file__).resolve().parent.parent / "targets"
+        targets = load_targets(root)
+        self.assertTrue(targets)
+        for t in targets:
+            with self.subTest(target=t.id):
+                cfg = t.rules.get("critical_price")
+                self.assertIsNotNone(cfg, f"{t.id} has no critical_price")
+                self.assertTrue(cfg.get("enabled"), f"{t.id}: critical_price is disabled")
+                self.assertIsInstance(cfg.get("price_cents"), int)
+                self.assertGreater(cfg["price_cents"], 0)

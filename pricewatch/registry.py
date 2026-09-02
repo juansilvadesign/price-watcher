@@ -17,6 +17,10 @@ from typing import Any
 
 from . import rules as _rules
 
+#: Rules whose threshold is hand-written in BRL and stored internally in centavos.
+#: Money is integer centavos everywhere inside the package; this is the only door.
+_BRL_PRICE_RULES = ("below_threshold", "critical_price")
+
 
 class ConfigError(ValueError):
     """A target file is malformed. Always fatal -- never warn and continue."""
@@ -54,8 +58,16 @@ def _normalise_rules(raw: dict, where: str) -> dict[str, dict]:
         cfg = dict(cfg)
 
         # Targets are hand-edited, so thresholds are written in BRL and converted here.
-        if name == "below_threshold" and "price_brl" in cfg:
-            cfg["price_cents"] = int(round(float(cfg.pop("price_brl")) * 100))
+        if name in _BRL_PRICE_RULES and "price_brl" in cfg:
+            brl = cfg.pop("price_brl")
+            # `isinstance(True, int)` is True, so a bare `true` would convert to
+            # R$ 1,00 -- a floor that reads as configured and matches nothing. The
+            # same trap `_validate_window_hours` guards, one type earlier: after
+            # conversion the bool is an ordinary 100 and no later check can see it.
+            if isinstance(brl, bool) or not isinstance(brl, (int, float)) or brl <= 0:
+                raise ConfigError(
+                    f"{where}: rule {name!r}: price_brl must be a positive number, got {brl!r}")
+            cfg["price_cents"] = int(round(float(brl) * 100))
         if name == "price_changed" and "min_delta_brl" in cfg:
             cfg["min_delta_cents"] = max(1, int(round(float(cfg.pop("min_delta_brl")) * 100)))
 
