@@ -19,7 +19,8 @@ pricewatch/
   rules.py               the six alert rules
   history.py             append-only JSONL, one file per target
   notify.py              Notifier interface + console / telegram / toast sinks
-  subscribers.py         who receives Telegram alerts besides you
+  subscribers.py         who receives Telegram alerts besides you, and in what language
+  messages.py            alert text per language; validated at import
   telegram_api.py        Bot API client; decodes Telegram's error envelope once
   adapters/
     base.py              the adapter contract
@@ -284,15 +285,49 @@ bot is not the same as being on the list. You are the gate:
 ```bash
 # 1. the friend opens your bot link and sends anything (/start is fine)
 python3 tools/telegram_subscribers.py --pending            # who is waiting
-python3 tools/telegram_subscribers.py --add 1122334455 --name rafa
+python3 tools/telegram_subscribers.py --add 1122334455 --name rafa --lang pt-BR
 python3 tools/telegram_subscribers.py --test 1122334455    # prove it reaches them
 python3 tools/telegram_subscribers.py                      # the current list
 ```
 
-They now receive **every alert for every target**, identical to yours, from the same run.
-There is no per-person target filtering — deliberately, so there is no second place a
-typo can silently mute somebody. Removing them is `--remove`; `--disable` keeps the entry
-and stops sending.
+They now receive **every alert for every target**, from the same run — the same alerts as
+yours, written in **their** language. There is no per-person target filtering —
+deliberately, so there is no second place a typo can silently mute somebody. Removing
+them is `--remove`; `--disable` keeps the entry and stops sending.
+
+### Languages
+
+`en-US` and `pt-BR`. You pick one per person when you approve them, and change it later
+with `--set-lang <chat_id> --lang pt-BR`. It is a plain field in `subscribers.json`, so
+editing the file by hand works too:
+
+```json
+{ "name": "rafa", "chat_id": "1122334455", "enabled": true, "lang": "pt-BR" }
+```
+
+**Yours does not change.** You are not on that list, and `console` and `toast` are yours
+alone — they stay English. Only the alert *text* is translated: the target label is your
+own words out of the target file, money is `R$ 250,00` in both (`fmt_brl` already writes
+pt-BR grouping), and the ticket name is whatever the site called it.
+
+```
+you   ⚠️ NEW LOWEST — R$ 250,00
+      Gramado || Inteira at R$ 250,00 (qty 3) beats the previous record of R$ 260,00.
+
+rafa  ⚠️ NOVA MÍNIMA — R$ 250,00
+      Gramado || Inteira a R$ 250,00 (qtd 3) supera o recorde anterior de R$ 260,00.
+```
+
+⛔ **A language that is not on the list is refused, not defaulted.** `"pt_br"` raises at
+startup and costs the Telegram sink for that run (the other sinks survive) until you fix
+it. Falling back to English would be the worse failure, because it is invisible to
+everyone who could report it: you would see an entry that looks configured, and they
+would receive working English alerts forever without knowing they were meant to be
+Portuguese. Your own copy is English either way, so nothing downstream would ever catch it.
+
+⚠️ `--test <chat_id>` sends in the language that chat is **already approved with**, so it
+checks the setting and the delivery in one go. That is the only chance to catch a wrong
+language — after that, every alert you personally receive is English regardless.
 
 **Two tiers, and they are not symmetric:**
 
@@ -327,8 +362,11 @@ auto-disabled at 3am shows up as the count dropping:
 
 ```
 notifiers: console, telegram, toast
-  telegram: you + 2 subscriber(s) — rafa, bruno
+  telegram: you + 2 subscriber(s) — rafa [pt-BR], bruno [en-US]
 ```
+
+The language is printed with the name for the same reason: it is the half you cannot
+verify by reading your own phone.
 
 ⛔ `subscribers.json` is **gitignored**: those are other people's chat ids. Same rule as
 `.env`, and the same consequence — it exists only on this machine, and losing it means

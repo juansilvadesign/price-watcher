@@ -5,6 +5,8 @@ import urllib.error
 from pathlib import Path
 from unittest import mock
 
+from pricewatch import messages
+from pricewatch.messages import DEFAULT_LANG
 from pricewatch.models import Alert, Reading
 from pricewatch.notify import (ConsoleNotifier, MultiNotifier, NotifyError,
                                TelegramNotifier, WindowsToastNotifier, configured_names,
@@ -13,11 +15,18 @@ from pricewatch.subscribers import Store, Subscriber, SubscriberError
 from pricewatch.telegram_api import TelegramApiError
 
 
-def alert(headline="NEW LOWEST — R$ 250,00", detail="detail", item="Gramado || Inteira"):
+def alert(key="lowest_ever", item="Gramado || Inteira", **overrides):
+    """A real catalog alert -- an alert cannot carry a hand-written sentence any more.
+
+    `item` is the only third-party value in the message: it is whatever the watched page
+    called the ticket, and it is what the escaping tests below drive.
+    """
     r = Reading(target_id="t", site="s", item=item, price_cents=25000, currency="BRL",
                 quantity=5, captured_at="2026-09-01T00:00:00+00:00",
                 source_url="https://example.test/e?a=1&b=2")
-    return Alert(target_id="t", rule="lowest_ever", headline=headline, detail=detail, reading=r)
+    params = {"item": item, "price": 25000, "qty": 5, "prior": 26000}
+    params.update(overrides)
+    return Alert(target_id="t", rule="lowest_ever", message_key=key, params=params, reading=r)
 
 
 class TestTelegram(unittest.TestCase):
@@ -38,7 +47,7 @@ class TestTelegram(unittest.TestCase):
 
     def test_escapes_markup_from_the_watched_site(self):
         """Ticket-class names are third-party text and must never render as markup."""
-        body = self.make(lambda u, p: None).format("L", [alert(item="x", detail="<b>&evil</b>")])
+        body = self.make(lambda u, p: None).format("L", [alert(item="<b>&evil</b>")])
         self.assertNotIn("<b>&evil", body)
         self.assertIn("&lt;b&gt;&amp;evil", body)
 
@@ -70,10 +79,34 @@ class TestWindowsToast(unittest.TestCase):
         return WindowsToastNotifier(runner=runner, powershell="/fake/powershell.exe")
 
     def script_for(self, title, body):
+        """The escaping unit itself.
+
+        It used to be reached by stuffing `body` into an alert's headline, which an
+        alert can no longer carry: headlines are rendered from the catalog and hold
+        money, never free text. The routing test below is what keeps this meaningful --
+        without it, `send` could stop calling `build_script` and every assertion here
+        would still pass.
+        """
+        return self.make(lambda argv: None).build_script(title, body)
+
+    def sent_script(self, title, alerts):
         seen = {}
-        self.make(lambda argv: seen.update(argv=argv)).send(title, [alert(headline=body)])
+        self.make(lambda argv: seen.update(argv=argv)).send(title, alerts)
         enc = seen["argv"][seen["argv"].index("-EncodedCommand") + 1]
         return base64.b64decode(enc).decode("utf-16-le")
+
+    def test_send_encodes_the_rendered_headlines_through_build_script(self):
+        """The route the escaping tests below depend on -- and the label is escaped on
+        the way, which is where an apostrophe actually reaches this sink now."""
+        script = self.sent_script("Juan's board", [alert()])
+        self.assertIn("NEW LOWEST", script)
+        self.assertIn("Juan&apos;s board", script)
+        self.assertNotIn("Juan's", script)
+
+    def test_the_toast_is_english_even_when_a_subscriber_is_not(self):
+        """This sink is yours alone. It has no recipient list and no language of its
+        own: it renders DEFAULT_LANG, and adding a pt-BR friend cannot change that."""
+        self.assertIn("NEW LOWEST", self.sent_script("L", [alert()]))
 
     def test_apostrophe_cannot_break_out_of_the_powershell_string(self):
         """A ticket name with ' would otherwise terminate the PS string early."""
@@ -201,8 +234,10 @@ class TelegramFanOutTestCase(unittest.TestCase):
         self.warnings = []
 
     def subs(self, *rows):
-        """rows: (chat_id, name, enabled)"""
-        self.store.save([Subscriber(name=n, chat_id=c, enabled=e) for c, n, e in rows])
+        """rows: (chat_id, name, enabled) or (chat_id, name, enabled, lang)"""
+        self.store.save([Subscriber(name=r[1], chat_id=r[0], enabled=r[2],
+                                    lang=r[3] if len(r) > 3 else DEFAULT_LANG)
+                         for r in rows])
         return self.store
 
     def make(self, post, store=None, chat_id=None):
@@ -247,8 +282,10 @@ class TestTelegramFanOut(TelegramFanOutTestCase):
         self.make(post).send("L", [alert()])
         self.assertEqual(post.chat_ids, [self.OWNER, "111", "222"])
 
-    def test_everyone_receives_the_identical_message(self):
-        self.subs(("111", "rafa", True))
+    def test_everyone_on_one_language_receives_the_identical_message(self):
+        """Language is the ONLY thing that is per-person -- no per-recipient targets,
+        rules or prices. Two people reading the same language get the same bytes."""
+        self.subs(("111", "rafa", True), ("222", "bruno", True))
         post = FakePost()
         self.make(post).send("L", [alert()])
         self.assertEqual(len({p["text"] for p in post.sent}), 1)
@@ -274,6 +311,119 @@ class TestTelegramFanOut(TelegramFanOutTestCase):
         post = FakePost()
         self.make(post).send("L", [])
         self.assertEqual(post.sent, [])
+
+
+class TestTelegramLanguages(TelegramFanOutTestCase):
+    """One firing, several languages. The rule cannot choose the sentence any more,
+    because the sentence is not the same for everyone it reaches."""
+
+    def sent_by_chat(self, post):
+        return {p["chat_id"]: p["text"] for p in post.sent}
+
+    def test_a_pt_br_subscriber_reads_portuguese_and_you_still_read_english(self):
+        self.subs(("111", "rafa", True, "pt-BR"))
+        post = FakePost()
+        self.make(post).send("L", [alert()])
+        by_chat = self.sent_by_chat(post)
+        self.assertIn("NEW LOWEST", by_chat[self.OWNER])
+        self.assertIn("NOVA MÍNIMA", by_chat["111"])
+        self.assertNotIn("NEW LOWEST", by_chat["111"])
+
+    def test_the_owner_language_does_not_follow_the_subscribers(self):
+        """Your copy is the control. If it drifted with whoever you last approved, the
+        fan-out would have no fixed reference to check anything against."""
+        self.subs(("111", "rafa", True, "pt-BR"), ("222", "bruno", True, "pt-BR"))
+        post = FakePost()
+        self.make(post).send("L", [alert()])
+        self.assertIn("NEW LOWEST", self.sent_by_chat(post)[self.OWNER])
+
+    def test_mixed_languages_each_get_their_own(self):
+        self.subs(("111", "rafa", True, "pt-BR"), ("222", "bruno", True, "en-US"))
+        post = FakePost()
+        self.make(post).send("L", [alert()])
+        by_chat = self.sent_by_chat(post)
+        self.assertIn("NOVA MÍNIMA", by_chat["111"])
+        self.assertIn("NEW LOWEST", by_chat["222"])
+        self.assertEqual(by_chat[self.OWNER], by_chat["222"], "same language, same bytes")
+
+    def test_the_target_label_is_not_translated(self):
+        """It is your own text out of the target file, already written how you want to
+        read it -- and a label is what an alert is identified BY."""
+        self.subs(("111", "rafa", True, "pt-BR"))
+        post = FakePost()
+        self.make(post).send("Rock in Rio 2026 — 04/09 · Gramado", [alert()])
+        for text in self.sent_by_chat(post).values():
+            self.assertIn("Rock in Rio 2026 — 04/09 · Gramado", text)
+
+    def test_money_is_identical_across_languages(self):
+        self.subs(("111", "rafa", True, "pt-BR"))
+        post = FakePost()
+        self.make(post).send("L", [alert()])
+        for text in self.sent_by_chat(post).values():
+            self.assertIn("R$ 250,00", text)
+
+    def test_the_third_party_ticket_name_is_escaped_in_every_language(self):
+        """Escaping happens at the sink, after rendering. A second language is a second
+        code path through the same escape, and markup does not care which one it took."""
+        self.subs(("111", "rafa", True, "pt-BR"))
+        post = FakePost()
+        self.make(post).send("L", [alert(item="<b>&evil</b>")])
+        for text in self.sent_by_chat(post).values():
+            self.assertNotIn("<b>&evil", text)
+            self.assertIn("&lt;b&gt;&amp;evil", text)
+
+    def test_owner_lang_can_be_overridden_for_the_add_time_delivery_test(self):
+        """`--test <chat>` addresses a friend through the OWNER slot to make a failure
+        loud. Left at DEFAULT_LANG it would report success on a setting it never
+        exercised -- and your own copy of every real alert is English regardless, so
+        nothing afterwards would catch it."""
+        post = FakePost()
+        TelegramNotifier(token="TOK", chat_id="111", post=post, store=self.store,
+                         owner_lang="pt-BR").send("L", [alert()])
+        self.assertIn("NOVA MÍNIMA", post.sent[0]["text"])
+
+
+class TestTelegramRenderFailures(TelegramFanOutTestCase):
+    """A broken template is not a delivery failure, and must not be charged like one.
+
+    The catalog is validated at import, so reaching these states requires patching it.
+    That is exactly why they are worth pinning: they are unreachable in a healthy tree
+    and therefore never exercised by anything else."""
+
+    def broken_lang(self, lang):
+        """A catalog whose `lang` column interpolates something no rule supplies."""
+        cat = {lg: dict(keys) for lg, keys in messages.CATALOG.items()}
+        cat[lang]["lowest_ever"] = ("{nonexistent}", cat[lang]["lowest_ever"][1])
+        return cat
+
+    def test_one_broken_language_does_not_cost_the_other_recipients(self):
+        """The MultiNotifier rule, two layers down: a friend's failure -- delivery or
+        rendering -- is never allowed to become yours."""
+        self.subs(("111", "rafa", True, "pt-BR"), ("222", "bruno", True, "en-US"))
+        post = FakePost()
+        with mock.patch.object(messages, "CATALOG", self.broken_lang("pt-BR")):
+            self.make(post).send("L", [alert()])            # must not raise
+        self.assertEqual(post.chat_ids, [self.OWNER, "222"],
+                         "everyone whose language still renders was delivered to")
+        self.assertTrue(any("rafa" in w for w in self.warnings))
+
+    def test_a_broken_template_never_disables_anybody(self):
+        """It is about the MESSAGE, not the chat -- the same distinction that keeps a
+        400 "can't parse entities" from wiping the whole list."""
+        self.subs(("111", "rafa", True, "pt-BR"))
+        with mock.patch.object(messages, "CATALOG", self.broken_lang("pt-BR")):
+            self.make(FakePost()).send("L", [alert()])
+        self.assertTrue(self.store.load()[0].enabled)
+
+    def test_a_broken_owner_language_still_raises_and_still_sends_to_friends(self):
+        """Exit 3 means YOU were not told, and an unrenderable message is one of the
+        ways that happens."""
+        self.subs(("111", "rafa", True, "pt-BR"))
+        post = FakePost()
+        with mock.patch.object(messages, "CATALOG", self.broken_lang(DEFAULT_LANG)):
+            with self.assertRaises(NotifyError):
+                self.make(post).send("L", [alert()])
+        self.assertEqual(post.chat_ids, ["111"], "the friend was still reached")
 
 
 class TestTelegramTiers(TelegramFanOutTestCase):

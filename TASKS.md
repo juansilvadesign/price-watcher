@@ -1,6 +1,9 @@
 # price-watcher — Tasks
 
-**State: v1.8, 2026-09-02.** 187 tests green offline. **All seven Rock in Rio nights**
+**State: v1.9, 2026-09-02.** 228 tests green offline. Alerts are written **per
+recipient language** (`en-US` / `pt-BR`); yours, console and toast stay English.
+⏳ The pt-BR path is offline-proven only — `--test <chat_id>` against a real friend
+is the outstanding leg. **All seven Rock in Rio nights**
 are live targets, read end to end; alerts fired and verified edge-triggered. Console,
 Windows toast and Telegram delivery are all **confirmed with a real message**. Cron
 runs two cadences: one minute for the three nights he would buy, five for the four
@@ -285,6 +288,68 @@ best-effort; the list lives in a gitignored `subscribers.json`.
 - [ ] 🟡 **Commit the 7 dirty doc/config files.** The code landed as `ec584ac`; the docs
       did not. ⛔ **`.gitignore` is the urgent one** — it carries the `subscribers.json`
       rule, and a real subscriber file now exists on disk.
+
+## Done — v1.9 (2026-09-02) — per-recipient language
+
+- [x] **`en-US` + `pt-BR`, chosen per friend when you approve them.**
+      `--add <id> --name <who> --lang pt-BR`, `--set-lang <id> --lang <l>` to change it,
+      and a `lang` column in `--list`. It is a plain field in `subscribers.json`, so
+      editing by hand works. ⛔ Yours is **not** in that file — you are not a subscriber,
+      and console + toast are yours alone and stay English.
+- [x] 🔴 **A rule can no longer write a sentence.** One firing now reaches recipients who
+      read different languages, so the wording cannot be chosen when the rule fires.
+      Rules emit a **message key + params**; `pricewatch/messages.py` renders it once per
+      language inside the sink. `Alert.headline`/`.detail` survive as the **en-US
+      rendering of that same catalog** — so console, toast and every existing test read
+      unchanged, and English is still written down in exactly one place. Two sets of
+      f-strings would have drifted the first time a rule's wording changed, and only the
+      person reading the *other* language would ever have seen it.
+- [x] **Two keys where a branch changes a word**, not one sentence with a swapped clause:
+      `price_changed.up`/`.down` and `critical_price.entering`/`.new_low`. "is a new low
+      below" sits mid-sentence in English and cannot be assumed to survive that position.
+- [x] 🔴 **The catalog is validated at IMPORT**, and all three checks guard a defect that
+      is silent in production. `_subscriber_failed` catches every exception from a send,
+      and a `KeyError` carries no `error_code`, so it is classified transient and warned
+      about forever without disabling anyone or moving the exit code:
+      ① a key missing from a language → that friend receives nothing, every run;
+      ② a placeholder typo (`{prise}`) → same silent warning;
+      ③ a **dropped** placeholder → the sentence still reads fine, it just stops saying
+      what the previous record was;
+      ④ a placeholder no formatter covers → raises *nothing anywhere* and renders raw
+      centavos (`25000` for `R$ 250,00`).
+      The catalog is source code, so a failure fails in the first test run and cannot
+      ship. `test_the_shipped_catalog_passes_its_own_validator` is the control leg.
+- [x] 🔴 **An unknown `lang` is refused; an absent one defaults to en-US.** Absent means
+      nobody chose. `"pt_br"` raises — because a fallback here is invisible to *everyone
+      who could report it*: the entry looks configured, your own copy of every alert is
+      English regardless, and the friend receives working English forever without knowing
+      it was meant to be Portuguese. Cost stated and accepted: a typo drops the Telegram
+      sink for the run (`build()` degrades, other sinks survive) until fixed.
+- [x] **Rendering is LAZY, per recipient, inside the try that already owns them.** A
+      broken template in one language costs exactly the people who read it — the
+      `MultiNotifier` rule two layers down. A broken *owner* language still raises and
+      still delivers to the friends. Pinned by mutation: rendering all languages eagerly
+      up front breaks 3 tests.
+- [x] **`--test <chat_id>` sends in the language that chat is already approved with**
+      (via `owner_lang`), not `DEFAULT_LANG`. It is the *only* chance to catch a wrong
+      language: every alert you personally receive afterwards is English regardless.
+- [x] **The fan-out header carries it** — `telegram: you + 2 subscriber(s) — rafa
+      [pt-BR], alex [en-US]` — so `cron.log` records the half you cannot verify from
+      your own phone.
+- [x] **`set_enabled` preserves `lang`.** It rebuilds the entry field by field, so every
+      field it forgets is silently lost: a friend auto-disabled at 3am and re-enabled
+      later would have come back reading English. Pinned by mutation.
+- [x] **228 tests green offline** (187 → 228). New: `tests/test_messages.py` (17) plus
+      language and render-failure coverage in `test_notify.py` / `test_subscribers.py`.
+- [x] **4 mutations, each caught by the right test and only it:** `set_enabled` drops
+      `lang` → 1 failure · eager rendering → 3 · `format()` ignores its `lang` → 5 ·
+      subscribers rendered at `owner_lang` → 4. Source restored and diffed clean after.
+- [x] **Verified end to end offline** through the real `lowest_ever` + `lowest_in_window`
+      rules on the real `rockinrio2026-09-04` target: owner got `NEW LOWEST — R$ 250,00`,
+      the pt-BR friends got `NOVA MÍNIMA — R$ 250,00`, identical money, identical label,
+      third-party ticket name escaped in both.
+- [ ] ⏳ **Not yet proven against live Telegram.** `--test <chat_id>` against a real
+      pt-BR friend is the outstanding leg; every check above is offline.
 
 ## Next — in priority order
 - [x] ✅ **Alert volume: MEASURED, not guessed — and it is not the problem.** Over the

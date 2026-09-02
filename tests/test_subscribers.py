@@ -3,6 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from pricewatch.messages import DEFAULT_LANG
 from pricewatch.subscribers import Store, Subscriber, SubscriberError, parse
 
 
@@ -172,6 +173,90 @@ class TestMutations(StoreTestCase):
     def test_a_healthy_entry_carries_no_disabled_reason_key(self):
         self.store.add("111", "rafa")
         self.assertNotIn("disabled_reason", self.path.read_text(encoding="utf-8"))
+
+
+class TestLanguage(StoreTestCase):
+    """Per-person language. Absent is a default; wrong is a refusal -- and the reason
+    the two are not symmetric is that nobody on this side can see the difference."""
+
+    def test_an_entry_with_no_lang_reads_as_the_owner_language(self):
+        """Every entry written before this feature existed. English is what they have
+        been receiving, and reading the file must not change that."""
+        subs = parse('{"subscribers": [{"chat_id": "111", "name": "rafa"}]}', "f")
+        self.assertEqual(subs[0].lang, DEFAULT_LANG)
+
+    def test_an_explicit_language_is_carried(self):
+        subs = parse('{"subscribers": [{"chat_id": "111", "lang": "pt-BR"}]}', "f")
+        self.assertEqual(subs[0].lang, "pt-BR")
+
+    def test_a_near_miss_is_refused_rather_than_falling_back(self):
+        """⛔ The expensive one. A fallback here is invisible to everybody who could
+        report it: you would see a configured entry, and they would receive working
+        English alerts forever without knowing they were meant to be Portuguese."""
+        for bad in ("pt_br", "PT-BR", "pt", "português", "en"):
+            with self.subTest(lang=bad):
+                with self.assertRaises(SubscriberError) as cm:
+                    parse(json.dumps({"subscribers": [{"chat_id": "1", "lang": bad}]}), "f")
+                self.assertIn("pt-BR", str(cm.exception), "it names the valid values")
+
+    def test_a_non_string_language_is_refused(self):
+        for bad in (True, 42, None, ["pt-BR"]):
+            with self.subTest(lang=bad):
+                with self.assertRaises(SubscriberError):
+                    parse(json.dumps({"subscribers": [{"chat_id": "1", "lang": bad}]}), "f")
+
+    def test_lang_is_written_even_at_its_default(self):
+        """Unlike added_at. It is a setting you are meant to find and edit by hand, and
+        a key that only appears once somebody changed it is a key nobody discovers."""
+        self.store.add("111", "rafa")
+        self.assertIn('"lang": "en-US"', self.path.read_text(encoding="utf-8"))
+
+    def test_add_carries_the_language_through(self):
+        sub = self.store.add("111", "rafa", "pt-BR")
+        self.assertEqual(sub.lang, "pt-BR")
+        self.assertEqual(self.store.load()[0].lang, "pt-BR")
+
+    def test_add_refuses_an_unknown_language_and_writes_nothing(self):
+        with self.assertRaises(SubscriberError):
+            self.store.add("111", "rafa", "pt_br")
+        self.assertEqual(self.store.load(), [], "a refused add left no half-entry")
+
+    def test_set_lang_changes_it_and_reports_whether_it_moved(self):
+        self.store.add("111", "rafa")
+        self.assertTrue(self.store.set_lang("111", "pt-BR"))
+        self.assertEqual(self.store.load()[0].lang, "pt-BR")
+        self.assertFalse(self.store.set_lang("111", "pt-BR"), "no change, no write")
+
+    def test_set_lang_leaves_every_other_field_alone(self):
+        self.store.add("111", "rafa")
+        self.store.add("222", "bruno")
+        added = self.store.load()[0].added_at
+        self.store.set_lang("111", "pt-BR")
+        by_id = {s.chat_id: s for s in self.store.load()}
+        self.assertEqual(by_id["111"].name, "rafa")
+        self.assertEqual(by_id["111"].added_at, added)
+        self.assertTrue(by_id["111"].enabled)
+        self.assertEqual(by_id["222"].lang, DEFAULT_LANG, "the other entry was untouched")
+
+    def test_set_lang_refuses_an_unknown_language(self):
+        self.store.add("111", "rafa")
+        with self.assertRaises(SubscriberError):
+            self.store.set_lang("111", "pt_br")
+        self.assertEqual(self.store.load()[0].lang, DEFAULT_LANG)
+
+    def test_disabling_someone_does_not_reset_their_language(self):
+        """`set_enabled` rebuilds the entry field by field, so every field it forgets is
+        silently lost. A friend auto-disabled at 3am and re-enabled next week would come
+        back reading English."""
+        self.store.add("111", "rafa", "pt-BR")
+        self.store.disable("111", "blocked the bot")
+        self.assertEqual(self.store.load()[0].lang, "pt-BR")
+        self.store.set_enabled("111", True, "")
+        self.assertEqual(self.store.load()[0].lang, "pt-BR")
+
+    def test_a_language_survives_a_save_and_reload_round_trip(self):
+        self.store.save([Subscriber(name="rafa", chat_id="111", lang="pt-BR")])
+        self.assertEqual(self.store.load()[0].lang, "pt-BR")
 
 
 if __name__ == "__main__":

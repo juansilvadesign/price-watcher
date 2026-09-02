@@ -67,6 +67,31 @@ shared belongs in the harness. If you find yourself putting a site name in
   found*. A 400 that is about the **message** (`can't parse entities`) fails for every
   recipient at once, so treating any 400 as permanent would let one ticket name the
   formatter mishandled wipe the whole list in a single run.
+- **A rule emits a message KEY and its parameters, never a sentence.** One firing
+  reaches recipients who read different languages, so the wording cannot be chosen
+  when the rule fires — only when it is delivered, once per language, in `messages.py`.
+  A new rule without a catalog entry raises inside `_deliver`, which the subscriber
+  path catches, classifies as transient and warns about forever: it would look like it
+  works and reach nobody.
+- **English is written down in exactly one place.** `Alert.headline` / `Alert.detail`
+  are the `DEFAULT_LANG` rendering of that same catalog, not a second copy of the text
+  — that is what keeps console and toast (yours alone, English) from drifting away from
+  what a subscriber reads. Two sets of f-strings would diverge the first time a rule's
+  wording changed, and the drift is only visible to the person reading the *other*
+  language.
+- **The message catalog is validated at import** (`messages._validate`): every key in
+  every language, the same placeholders in each, and a formatter for each placeholder.
+  All three defects are silent in production — a missing key or a typo becomes a
+  per-friend warning at 3am, and a placeholder no formatter covers raises nothing at
+  all and simply renders raw centavos. The catalog is source code, so refusing to
+  import fails in development first and cannot ship.
+- **An absent `lang` is a default; an unknown one is a refusal** (`subscribers.py`).
+  Absent means nobody chose, and English is what this tool has always sent. `"pt_br"`
+  is refused instead of falling back, because the fallback is invisible to everyone who
+  could report it: the entry looks configured, your own copy of every alert is English
+  regardless, and the friend receives working English forever. Same shape as a rule
+  enabled without its parameter. ⛔ Only the alert **text** is per-person — never the
+  targets, the rules or the prices.
 - ⛔ **`.env` is parsed, never sourced**, and never committed. Anything interpolated
   into a shell, a PowerShell script, or markup gets escaped at the boundary — ticket
   names are third-party text (an apostrophe in one would otherwise break the toast).
