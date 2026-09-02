@@ -25,7 +25,7 @@
   "rules": {
     "critical_price": {
       "enabled": true,
-      "price_brl": 450.0
+      "price_brl": 300.0
     },
     "lowest_ever": {
       "enabled": true
