@@ -64,10 +64,35 @@ class Reading:
 
 @dataclass(frozen=True)
 class Alert:
-    """A fired alert rule, ready to hand to a Notifier."""
+    """A fired alert rule, ready to hand to a Notifier.
+
+    It carries **what happened**, not a sentence about it: a `message_key` and the
+    values that go in it. One firing reaches recipients who read different languages,
+    so the sentence cannot be chosen when the rule fires -- only when it is delivered.
+    `messages.render` does that, once per language, inside the sink.
+
+    `headline` and `detail` are still here, and still English: they are the en-US
+    rendering of that same catalog, not a second copy of the text. Console and toast
+    are yours alone, read them, and did not change.
+    """
 
     target_id: str
     rule: str
-    headline: str
-    detail: str
+    message_key: str
+    params: dict[str, Any]
     reading: Reading
+
+    def render(self, lang: str | None = None) -> tuple[str, str]:
+        # Imported here, not at module scope: `messages` needs `fmt_brl` from this
+        # module, so a top-level import would be a cycle. By the time any alert is
+        # rendered both modules are fully loaded, and this costs one dict lookup.
+        from . import messages
+        return messages.render(self.message_key, self.params, lang or messages.DEFAULT_LANG)
+
+    @property
+    def headline(self) -> str:
+        return self.render()[0]
+
+    @property
+    def detail(self) -> str:
+        return self.render()[1]

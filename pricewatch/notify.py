@@ -5,8 +5,12 @@ combination — `--notifier console telegram toast`, or set `PRICEWATCH_NOTIFIER
 in `.env` so a cron line stays short.
 
 The `telegram` sink fans out: to **you** (`TELEGRAM_CHAT_ID`, critical) and to every
-friend you approved into `subscribers.json` (best-effort). See `subscribers.py` for why
-those two tiers are not symmetric.
+friend you approved into `subscribers.json` (best-effort), each in the language you
+approved them with. See `subscribers.py` for why those two tiers are not symmetric, and
+`messages.py` for why a rule no longer writes the sentence itself.
+
+`console` and `toast` are yours alone and stay in `messages.DEFAULT_LANG` — they read
+`Alert.headline` / `Alert.detail`, which are that catalog rendered in English.
 
 Two rules the harness depends on:
 
@@ -34,7 +38,7 @@ import sys
 import xml.sax.saxutils as _xml
 from typing import Callable, Protocol
 
-from . import config, subscribers, telegram_api
+from . import config, messages, subscribers, telegram_api
 from .models import Alert, utcnow_iso
 
 
@@ -106,6 +110,12 @@ class TelegramNotifier:
     Every recipient is attempted before anything is raised — the same rule
     `MultiNotifier` applies across sinks, one layer down.
 
+    Each recipient is also rendered in **their own language** (`subscribers.json`'s
+    `lang`; yours is `messages.DEFAULT_LANG`), which is why an alert arrives here as a
+    key and its parameters rather than as a finished sentence. Only the alert text
+    changes: the target label is your own words from the target file, `fmt_brl` already
+    writes pt-BR money in both, and the ticket name is whatever the site called it.
+
     The recipient list is read at **construction**, not at send time, so a corrupt
     `subscribers.json` is a startup failure exactly like a missing chat id, and never a
     discovery made on the one alert that mattered.
@@ -116,7 +126,8 @@ class TelegramNotifier:
     def __init__(self, token: str | None = None, chat_id: str | None = None,
                  post: Callable[[str, dict], None] = _urllib_post,
                  store: "subscribers.Store | None" = None,
-                 on_warning: Callable[[str], None] | None = None) -> None:
+                 on_warning: Callable[[str], None] | None = None,
+                 owner_lang: str | None = None) -> None:
         self.token = token or config.require(
             "BOT_API_TOKEN", "Create a bot with @BotFather to get one.")
         self.chat_id = chat_id or config.require(
@@ -133,6 +144,10 @@ class TelegramNotifier:
                 f"`python3 tools/telegram_subscribers.py --add <chat_id> --name <who>`.")
         self._post = post
         self._warn = on_warning or (lambda m: print(m, file=sys.stderr))
+        # Overridden only by `tools/telegram_subscribers.py --test`, which addresses a
+        # friend through the owner slot to make a failure loud, and must therefore be
+        # able to send them the language they were actually approved with.
+        self.owner_lang = owner_lang or messages.DEFAULT_LANG
         self.store = subscribers.Store() if store is None else store
         # Deduped against the owner: an id that is both yours and a subscriber's would
         # deliver every alert to you twice. The tool refuses to add it; this is the
@@ -144,24 +159,44 @@ class TelegramNotifier:
         """Owner first, then subscribers — the order messages are actually sent in."""
         return [self.chat_id] + [s.chat_id for s in self.subscribers]
 
-    def format(self, target_label: str, alerts: list[Alert]) -> str:
-        """HTML for Telegram. Every interpolated value is escaped — ticket-class
-        names come from a third-party page and must never be trusted as markup."""
+    def format(self, target_label: str, alerts: list[Alert], lang: str | None = None) -> str:
+        """HTML for Telegram, in one language.
+
+        Every interpolated value is escaped — ticket-class names come from a
+        third-party page and must never be trusted as markup. Escaping happens HERE,
+        after `render`, and not inside the catalog: escaping a parameter before it is
+        interpolated would double-escape it the moment this line ran.
+
+        `target_label` is deliberately not translated. It is your own text out of the
+        target file, and it is already written the way you want to read it.
+        """
         e = html.escape
         lines = [f"<b>{e(target_label)}</b>"]
         for a in alerts:
-            lines.append(f"\n⚠️ <b>{e(a.headline)}</b>\n{e(a.detail)}")
+            headline, detail = a.render(lang)
+            lines.append(f"\n⚠️ <b>{e(headline)}</b>\n{e(detail)}")
         lines.append(f"\n{e(alerts[0].reading.source_url)}")
         return "\n".join(lines)
 
     def send(self, target_label: str, alerts: list[Alert]) -> None:
         if not alerts:
             return
-        text = self.format(target_label, alerts)
+
+        # Rendered once per LANGUAGE, not once per recipient — and lazily, so that each
+        # render happens inside the try that already owns that recipient. A template
+        # defect in one language then costs exactly the people who read it, which is the
+        # same rule as everything else in this module: one recipient's failure is never
+        # allowed to become another's.
+        rendered: dict[str, str] = {}
+
+        def text_for(lang: str) -> str:
+            if lang not in rendered:
+                rendered[lang] = self.format(target_label, alerts, lang)
+            return rendered[lang]
 
         owner_error = None
         try:
-            self._deliver(self.chat_id, text)
+            self._deliver(self.chat_id, text_for(self.owner_lang))
         except Exception as e:                          # noqa: BLE001 -- re-raised below
             owner_error = f"{type(e).__name__}: {e}"
 
@@ -170,7 +205,7 @@ class TelegramNotifier:
         # would have gone through should not be lost to yours not going through.
         for sub in self.subscribers:
             try:
-                self._deliver(sub.chat_id, text)
+                self._deliver(sub.chat_id, text_for(sub.lang))
             except Exception as e:                      # noqa: BLE001 -- warn, never raise
                 self._subscriber_failed(sub, e)
 

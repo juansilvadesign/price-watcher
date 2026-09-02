@@ -20,7 +20,10 @@ from __future__ import annotations
 
 import datetime as _dt
 
-from .models import Alert, Reading, fmt_brl
+# No formatting here any more: a rule emits a message key and its parameters,
+# and `messages.py` turns those into a sentence -- once per language -- at
+# delivery time. One firing can reach recipients who read different languages.
+from .models import Alert, Reading
 
 
 def _cheapest(readings: list[Reading]) -> Reading | None:
@@ -74,9 +77,9 @@ def lowest_ever(target, readings, history) -> Alert | None:
         return Alert(
             target_id=target.id,
             rule="lowest_ever",
-            headline=f"NEW LOWEST — {fmt_brl(now.price_cents)}",
-            detail=(f"{now.item} at {fmt_brl(now.price_cents)} (qty {now.quantity}) "
-                    f"beats the previous record of {fmt_brl(prior)}."),
+            message_key="lowest_ever",
+            params={"item": now.item, "price": now.price_cents,
+                    "qty": now.quantity, "prior": prior},
             reading=now,
         )
     return None
@@ -95,9 +98,9 @@ def below_threshold(target, readings, history) -> Alert | None:
     return Alert(
         target_id=target.id,
         rule="below_threshold",
-        headline=f"UNDER {fmt_brl(ceiling)} — {fmt_brl(now.price_cents)}",
-        detail=(f"{now.item} at {fmt_brl(now.price_cents)} (qty {now.quantity}) "
-                f"is at or below your ceiling of {fmt_brl(ceiling)}."),
+        message_key="below_threshold",
+        params={"item": now.item, "price": now.price_cents,
+                "qty": now.quantity, "ceiling": ceiling},
         reading=now,
     )
 
@@ -118,9 +121,9 @@ def drop_pct(target, readings, history) -> Alert | None:
     return Alert(
         target_id=target.id,
         rule="drop_pct",
-        headline=f"DROP {moved:.1f}% — {fmt_brl(now.price_cents)}",
-        detail=(f"{now.item} fell from {fmt_brl(prev)} to {fmt_brl(now.price_cents)} "
-                f"({moved:.1f}%, threshold {pct:g}%), qty {now.quantity}."),
+        message_key="drop_pct",
+        params={"item": now.item, "price": now.price_cents, "qty": now.quantity,
+                "prev": prev, "moved": moved, "pct": pct},
         reading=now,
     )
 
@@ -153,14 +156,13 @@ def price_changed(target, readings, history) -> Alert | None:
     if direction == "up" and delta <= 0:
         return None
 
-    arrow = "DOWN" if delta < 0 else "UP"
-    pct = abs(delta) / prev * 100.0 if prev else 0.0
+    moved = abs(delta) / prev * 100.0 if prev else 0.0
     return Alert(
         target_id=target.id,
         rule="price_changed",
-        headline=f"{arrow} {fmt_brl(abs(delta))} — now {fmt_brl(now.price_cents)}",
-        detail=(f"{now.item} moved {fmt_brl(prev)} → {fmt_brl(now.price_cents)} "
-                f"({arrow.lower()} {pct:.1f}%), qty {now.quantity}."),
+        message_key="price_changed.down" if delta < 0 else "price_changed.up",
+        params={"item": now.item, "price": now.price_cents, "qty": now.quantity,
+                "prev": prev, "delta": abs(delta), "moved": moved},
         reading=now,
     )
 
@@ -193,9 +195,9 @@ def lowest_in_window(target, readings, history) -> Alert | None:
     return Alert(
         target_id=target.id,
         rule="lowest_in_window",
-        headline=f"{hours:g}h LOW — {fmt_brl(now.price_cents)}",
-        detail=(f"{now.item} at {fmt_brl(now.price_cents)} (qty {now.quantity}) is the "
-                f"cheapest in {hours:g}h, beating {fmt_brl(prior)}."),
+        message_key="lowest_in_window",
+        params={"item": now.item, "price": now.price_cents, "qty": now.quantity,
+                "hours": hours, "prior": prior},
         reading=now,
     )
 
@@ -230,15 +232,15 @@ def critical_price(target, readings, history) -> Alert | None:
         return None
 
     entering = prev is None or prev >= floor
-    why = "is below" if entering else "is a new low below"
     return Alert(
         target_id=target.id,
         rule="critical_price",
-        headline=f"CRITICAL {fmt_brl(now.price_cents)} — under {fmt_brl(floor)}",
-        detail=(f"{now.item} at {fmt_brl(now.price_cents)} (qty {now.quantity}) "
-                f"{why} the anomaly floor of {fmt_brl(floor)}. Verify before acting "
-                f"— this far under market is often a listing error, and it is "
-                f"deliberately excluded from every baseline."),
+        # Two keys, not one sentence with a swapped clause: "is below" / "is a new low
+        # below" sits mid-sentence in English and cannot be assumed to survive that
+        # position in another language.
+        message_key="critical_price.entering" if entering else "critical_price.new_low",
+        params={"item": now.item, "price": now.price_cents,
+                "qty": now.quantity, "floor": floor},
         reading=now,
     )
 

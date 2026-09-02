@@ -145,18 +145,20 @@ def main(argv=None) -> int:
         subs = getattr(sink, "subscribers", None)
         if subs is None:
             continue
-        who = f" — {', '.join(s.name for s in subs)}" if subs else ""
+        # The language is printed with the name because it is the half you cannot
+        # verify by receiving the alert yourself: your copy is always English, so a
+        # friend approved into the wrong language leaves no trace on your phone.
+        who = f" — {', '.join(f'{s.name} [{s.lang}]' for s in subs)}" if subs else ""
         print(f"  {sink.name}: you + {len(subs)} subscriber(s){who}")
 
     if args.test_notify:
         probe = Reading(target_id="test", site="test", item="TEST || probe",
                         price_cents=12345, currency="BRL", quantity=1,
                         captured_at=utcnow_iso(), source_url="https://example.test/probe")
-        alert = Alert(target_id="test", rule="test_notify",
-                      headline="TEST — R$ 123,45",
-                      detail="Synthetic alert from `watch.py --test-notify`. "
-                             "If you received this, delivery works.",
-                      reading=probe)
+        # Goes through the real fan-out, so each subscriber receives it in the language
+        # they were approved with — which is the only way to check that half end to end.
+        alert = Alert(target_id="test", rule="test_notify", message_key="test_notify",
+                      params={"price": probe.price_cents}, reading=probe)
         try:
             notifier.send("price-watcher delivery test", [alert])
         except NotifyError as e:

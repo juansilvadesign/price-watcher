@@ -20,6 +20,7 @@ like from the outside.
 
 Every validation here refuses rather than defaults, for the same reason `registry.py`
 does: an entry that loads but can never receive is worse than one that fails loudly.
+`lang` is the newest instance of that rule and the least obvious -- see `_lang`.
 
 ⛔ `subscribers.json` is gitignored. Chat ids are other people's personal data, and this
 repo may be published -- there is nothing in this file that belongs in a commit.
@@ -34,6 +35,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from . import config
+from .messages import DEFAULT_LANG, LANGS
 
 DEFAULT_PATH = Path(__file__).resolve().parent.parent / "subscribers.json"
 
@@ -47,11 +49,18 @@ class Subscriber:
     name: str
     chat_id: str
     enabled: bool = True
+    #: The language THIS person's alerts are written in. Yours is not stored here:
+    #: `TELEGRAM_CHAT_ID` is not a subscriber, and the owner reads `DEFAULT_LANG`.
+    lang: str = DEFAULT_LANG
     added_at: str = ""
     disabled_reason: str = ""
 
     def to_json(self) -> dict:
-        d = {"name": self.name, "chat_id": self.chat_id, "enabled": self.enabled}
+        # `lang` is written even at its default, unlike `added_at`. It is a setting you
+        # are meant to find and edit by hand, and a key that only appears once somebody
+        # has already changed it is a key nobody discovers.
+        d = {"name": self.name, "chat_id": self.chat_id, "enabled": self.enabled,
+             "lang": self.lang}
         if self.added_at:
             d["added_at"] = self.added_at
         # Written only when set: a healthy entry stays clean, and the presence of the
@@ -78,11 +87,38 @@ def _chat_id_str(raw, where: str) -> str:
     raise SubscriberError(f"{where}: chat_id must be a non-empty string or integer, got {raw!r}")
 
 
+def _lang(raw: dict, where: str) -> str:
+    """The language for one entry. Absent is a default; wrong is a refusal.
+
+    Absent means "nobody chose", and English is what this tool has always sent -- the
+    same shape as an absent `subscribers.json` meaning nobody is subscribed.
+
+    An unknown value is refused instead of falling back, and the reason is that the
+    fallback is *invisible to the only person who would notice it*. A friend approved
+    with `"pt_br"` would receive perfectly working English alerts forever; you would see
+    an entry that looks configured, and they would never think to mention that the
+    thing you set up for them arrived in the wrong language. Same failure shape as a
+    rule enabled without its parameter: configured, plausible, silently not what was
+    asked for. The cost is stated and accepted -- a typo here drops the whole Telegram
+    sink for the run (`build()` degrades, the other sinks survive) until you fix it.
+    """
+    if "lang" not in raw:
+        return DEFAULT_LANG
+    lang = raw["lang"]
+    if not isinstance(lang, str) or lang not in LANGS:
+        raise SubscriberError(
+            f"{where}: 'lang' must be one of {', '.join(LANGS)} — got {lang!r}. "
+            f"Fix it by hand or with `--set-lang <chat_id> --lang <one of those>`.")
+    return lang
+
+
 def _subscriber_from(raw, where: str) -> Subscriber:
     if not isinstance(raw, dict):
         raise SubscriberError(f"{where}: each subscriber must be an object, got {type(raw).__name__}")
     if "chat_id" not in raw:
         raise SubscriberError(f"{where}: missing required key 'chat_id'")
+
+    chat_id = _chat_id_str(raw["chat_id"], where)
 
     enabled = raw.get("enabled", True)
     # A string "false" is truthy, so `bool()` here would arm an entry its author
@@ -92,11 +128,11 @@ def _subscriber_from(raw, where: str) -> Subscriber:
             f"{where}: 'enabled' must be true or false, got {enabled!r}. "
             f"A quoted \"false\" is truthy and would deliver to a chat you switched off.")
 
-    chat_id = _chat_id_str(raw["chat_id"], where)
     return Subscriber(
         name=str(raw.get("name") or f"chat:{chat_id}"),
         chat_id=chat_id,
         enabled=enabled,
+        lang=_lang(raw, where),
         added_at=str(raw.get("added_at") or ""),
         disabled_reason=str(raw.get("disabled_reason") or ""),
     )
@@ -173,7 +209,7 @@ class Store:
             if s.chat_id == str(chat_id) and (s.enabled != enabled or
                                               (not enabled and s.disabled_reason != reason)):
                 out.append(Subscriber(name=s.name, chat_id=s.chat_id, enabled=enabled,
-                                      added_at=s.added_at,
+                                      lang=s.lang, added_at=s.added_at,
                                       disabled_reason=reason if not enabled else ""))
                 changed = True
             else:
@@ -185,13 +221,42 @@ class Store:
     def disable(self, chat_id: str, reason: str) -> bool:
         return self.set_enabled(chat_id, False, reason)
 
-    def add(self, chat_id: str, name: str = "") -> Subscriber:
+    def set_lang(self, chat_id: str, lang: str) -> bool:
+        """Change one subscriber's language. Returns whether anything changed.
+
+        Re-reads from disk before writing for the same reason `set_enabled` does: two
+        cron cadences hold this file at once, and one of them auto-disables people.
+        """
+        if lang not in LANGS:
+            raise SubscriberError(
+                f"lang must be one of {', '.join(LANGS)} — got {lang!r}")
+        subs = self.load()
+        out, changed = [], False
+        for s in subs:
+            if s.chat_id == str(chat_id) and s.lang != lang:
+                out.append(Subscriber(name=s.name, chat_id=s.chat_id, enabled=s.enabled,
+                                      lang=lang, added_at=s.added_at,
+                                      disabled_reason=s.disabled_reason))
+                changed = True
+            else:
+                out.append(s)
+        if changed:
+            self.save(out)
+        return changed
+
+    def add(self, chat_id: str, name: str = "", lang: str = DEFAULT_LANG) -> Subscriber:
         """Append one subscriber. Raises if the chat id is already present."""
         chat_id = _chat_id_str(chat_id, "add")
+        # Checked before the duplicate check so a bad language never half-succeeds, and
+        # refused rather than defaulted for the reason `_lang` gives.
+        if lang not in LANGS:
+            raise SubscriberError(
+                f"lang must be one of {', '.join(LANGS)} — got {lang!r}")
         subs = self.load()
         if any(s.chat_id == chat_id for s in subs):
             raise SubscriberError(f"chat_id {chat_id} is already in {self.path.name}")
         sub = Subscriber(name=name or f"chat:{chat_id}", chat_id=chat_id, enabled=True,
+                         lang=lang,
                          added_at=_dt.datetime.now(_dt.timezone.utc)
                          .replace(microsecond=0).isoformat())
         self.save(subs + [sub])
