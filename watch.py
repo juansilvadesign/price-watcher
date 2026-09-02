@@ -31,7 +31,7 @@ ROOT = Path(__file__).resolve().parent
 
 
 def run_target(target, history, notifier, dry_run: bool, verbose: bool) -> str:
-    """Run one target. Returns "ok", "adapter" or "delivery"."""
+    """Run one target. Returns "ok", "adapter", "config" or "delivery"."""
     print(f"\n=== {target.label}  [{target.id}]")
     adapter = adapters.build(target.adapter)
 
@@ -41,7 +41,17 @@ def run_target(target, history, notifier, dry_run: bool, verbose: bool) -> str:
         print(f"  ADAPTER FAILED: {e}", file=sys.stderr)
         return "adapter"
 
-    readings = apply_filters(raw, target.filters, where=target.id)
+    try:
+        readings = apply_filters(raw, target.filters, where=target.id)
+    except FilterError as e:
+        # Caught per target, symmetric with the AdapterError branch above. This used to
+        # be a single catch wrapped around the whole loop in main(), so one misconfigured
+        # target cost every target after it in the same run -- and target order is
+        # alphabetical, not chosen. The run still exits 2; the error just stops being
+        # contagious.
+        print(f"  CONFIG ERROR: {e}", file=sys.stderr)
+        return "config"
+
     print(f"  {len(raw)} listings seen, {len(readings)} after filters")
 
     if not readings:
@@ -141,14 +151,16 @@ def main(argv=None) -> int:
         return 2
 
     outcomes = []
-    try:
-        for t in enabled:
-            outcomes.append(run_target(t, history, notifier, args.dry_run, args.verbose))
-    except FilterError as e:
-        print(f"config error: {e}", file=sys.stderr)
-        return 2
+    for t in enabled:
+        outcomes.append(run_target(t, history, notifier, args.dry_run, args.verbose))
 
     print()
+    # Precedence is a decision, not a default: config (2) outranks the rest because it
+    # already did -- a FilterError aborted the run outright, discarding any earlier
+    # delivery failure with it. Keeping that order means this change moves the blast
+    # radius and nothing else.
+    if "config" in outcomes:
+        return 2
     if "adapter" in outcomes:
         return 1
     if "delivery" in outcomes:

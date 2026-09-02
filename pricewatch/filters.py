@@ -17,10 +17,20 @@ class FilterError(ValueError):
 def apply_filters(readings: list[Reading], filters: dict, where: str = "target") -> list[Reading]:
     """Return the subset of `readings` a target cares about.
 
-    An empty result is legitimate data ("the sector is sold out"). A filter naming
-    a field no reading carries is NOT -- that is a typo that would silently discard
-    every reading and look like a sold-out market forever, so it raises.
+    An empty result is legitimate data ("the sector is sold out"), and so is an empty
+    input -- both return []. A filter naming a field no reading carries is NOT -- that
+    is a typo that would silently discard every reading and look like a sold-out market
+    forever, so it raises.
     """
+    if not readings:
+        # An empty read is data ("the sector is sold out"), and there is nothing here
+        # to typo-check a filter against. Falling through would reach
+        # `any(field in r.extra for r in readings)` below, which is vacuously False on
+        # [] -- so both guards would fire on a legitimately empty read and collapse
+        # "sold out" into "broken config", the exact pair the project's first invariant
+        # forbids. The guards keep their teeth on every non-empty read.
+        return []
+
     if not filters:
         return list(readings)
 

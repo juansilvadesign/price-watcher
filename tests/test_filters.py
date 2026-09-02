@@ -75,5 +75,38 @@ class TestFilters(unittest.TestCase):
         self.assertEqual([x.item for x in got], ["Gramado || Inteira"])
 
 
+class TestEmptyReadIsNotAConfigError(unittest.TestCase):
+    """The vacuous-`any()` trap.
+
+    `any(field in r.extra for r in [])` is False, so both typo guards used to fire on a
+    legitimately empty read -- collapsing "sold out" into "broken config", the exact
+    pair this project's first invariant forbids. It reached production once
+    (`history/cron.log`, 2026-09-01, rockinrio2026-09-11).
+
+    Every leg here is paired with its known-bad twin: letting `[]` through must not
+    cost the guard its teeth on a non-empty read.
+    """
+
+    # Verbatim from the seven shipped target files, so this breaks if that shape moves.
+    SHIPPED = {"min_quantity": 1, "extra": {"sector": ["Gramado"], "entry_class": None}}
+
+    def test_an_empty_read_under_the_shipped_filters_is_data(self):
+        self.assertEqual(apply_filters([], self.SHIPPED, where="rockinrio2026-09-06"), [])
+
+    def test_known_bad_leg_a_typo_on_a_NON_empty_read_still_raises(self):
+        with self.assertRaises(FilterError):
+            apply_filters(ROWS, {"extra": {"sectr": ["Gramado"]}})
+
+    def test_an_empty_read_is_data_for_exclude_filters_too(self):
+        self.assertEqual(apply_filters([], {"extra_exclude": {"sector": ["Vip"]}}), [])
+
+    def test_known_bad_leg_an_exclude_typo_on_a_NON_empty_read_still_raises(self):
+        with self.assertRaises(FilterError):
+            apply_filters(ROWS, {"extra_exclude": {"sectr": ["Vip"]}})
+
+    def test_an_empty_read_with_no_filters_configured(self):
+        self.assertEqual(apply_filters([], {}), [])
+
+
 if __name__ == "__main__":
     unittest.main()

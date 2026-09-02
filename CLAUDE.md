@@ -22,8 +22,15 @@ shared belongs in the harness. If you find yourself putting a site name in
   broken adapter that returns `[]` looks healthy forever and silently stops alerting.
 - **A rule enabled without its parameter must refuse to load** (`registry.py`).
   Same failure shape: it looks configured and can never fire.
-- **A filter naming a field no reading carries must raise** (`filters.py`). A typo'd
-  filter is indistinguishable from a sold-out market.
+- **A filter naming a field no reading carries must raise** (`filters.py`) — but only
+  on a **non-empty** read. A typo'd filter is otherwise indistinguishable from a
+  sold-out market. On an empty read there is nothing to check a field name against, so
+  `[]` passes through as data; guarding there is vacuously true and collapses "sold
+  out" into "broken config", which is the invariant above in disguise.
+- **One target's failure never costs another target its run.** Adapter and config
+  errors are caught per target in `watch.py`; the run finishes and the exit code
+  reports the worst outcome. Targets load alphabetically, so a whole-run abort lets a
+  filename decide which watches you silently lose.
 - **Rules are evaluated before the current run is appended to history.** Otherwise
   every run is its own baseline and nothing can ever fire. `watch.py` owns that order.
 - **Rules are edge-triggered.** Level-triggered alerts on a cron schedule train the

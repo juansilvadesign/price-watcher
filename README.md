@@ -24,7 +24,7 @@ pricewatch/
     buyticketbrasil.py   site #1
 targets/*.json           one file per thing being watched
 history/*.jsonl          append-only price record
-tests/                   93 tests, fully offline (real captured fixture)
+tests/                   101 tests, fully offline (real captured fixture)
 ```
 
 **Zero dependencies.** Python 3.10+ standard library only — no venv needed, nothing
@@ -38,11 +38,16 @@ python3 watch.py --verbose             # print every listing, not just the cheap
 python3 watch.py --only rockinrio2026-09-04
 python3 watch.py --dry-run             # fetch + evaluate, write nothing
 python3 watch.py --list                # show the registry
-python3 -m unittest discover -s tests -t .   # 93 tests, no network
+python3 -m unittest discover -s tests -t .   # 101 tests, no network
 ```
 
 Exit codes: `0` clean · `1` at least one adapter failed · `2` configuration error ·
 `3` alerts fired but delivery failed. Cron and `&&` chains can rely on them.
+
+**Failures are per target, not per run.** A misconfigured or unreadable target reports
+itself and the run carries on to the rest; the exit code still reflects the worst
+outcome (`2` outranks `1` outranks `3`). Targets load in alphabetical order, so a
+whole-run abort used to mean which nights you lost was decided by filename.
 
 ### Running it unattended
 
@@ -162,6 +167,11 @@ The contract's load-bearing rule: **raise `AdapterError` when the site cannot be
 read; return `[]` only for a genuine "nothing on sale".** Collapsing those two into
 an empty list turns a broken watcher into a healthy-looking one that reports
 nothing forever.
+
+`[]` then travels the whole way as data: the filters short-circuit on it (there is
+nothing to typo-check a filter against) and `watch.py` prints "nothing on sale" and
+moves to the next target. The filter typo-guard still raises on any **non-empty**
+read — that is where a typo is actually distinguishable from a sold-out market.
 
 ## Notifications
 

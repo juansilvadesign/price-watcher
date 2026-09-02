@@ -1,6 +1,6 @@
 # price-watcher — Tasks
 
-**State: v1.4, 2026-09-01.** 93 tests green offline. **All seven Rock in Rio nights**
+**State: v1.5, 2026-09-01.** 101 tests green offline. **All seven Rock in Rio nights**
 are live targets, read end to end; alerts fired and verified edge-triggered. Console,
 Windows toast and Telegram delivery are all **confirmed with a real message**. Cron
 runs two cadences: one minute for the three nights he would buy, five for the four
@@ -95,6 +95,36 @@ he is only tracking.
       `python3 tests/test_buyticketbrasil.py` collected 10 tests and silently skipped it.
       Guard moved to the end; the direct run now collects 12.
 
+## Done — v1.5 (2026-09-01)
+
+- [x] 🔴 **The empty-read `FilterError` is decided and fixed** (Juan, by interview).
+      `filters.py` short-circuits on an empty `readings` list: there is nothing to
+      typo-check a filter against, and `any(field in r.extra for r in [])` is
+      **vacuously False**, so both guards used to fire on a legitimately empty read and
+      collapse "sold out" into "broken config" — the pair the first invariant forbids.
+      ⛔ The guards keep their teeth: a typo on a **non-empty** read still raises, which
+      is the only case where a typo is distinguishable from an empty market.
+- [x] 🔴 **The blast radius was a second, independent defect — also fixed.** `watch.py`
+      caught `FilterError` **outside** the per-target loop, so *any* config error, typo
+      included, aborted every target after it. It is now caught per target and symmetric
+      with the `AdapterError` branch above it: report, mark the target `config`, keep
+      going. The run still exits **2** — config outranks adapter (1) and delivery (3),
+      preserving the old precedence, since a `FilterError` previously discarded any
+      earlier delivery failure by returning immediately.
+- [x] **Both fixes have a known-bad leg that FAILED FIRST on the pre-fix code**, checked
+      by reverting the two source files and re-running:
+      `[]` under the shipped filters raised · `[]` end-to-end through `main()` exited
+      **2** instead of 0 · a typo'd target left the next one unpolled
+      (`'z-good' not found in '… === label a-bad [a-bad]'` — the blast radius, printed).
+      Their control legs passed on both sides: a typo on a non-empty read still raises,
+      and a clean two-target run still exits 0.
+- [x] **New `tests/test_watch.py`** drives `main()` against a stub adapter registered in
+      `adapters.ADAPTERS` — no network, no fixture. 93 → **101 tests**.
+- [x] **Live re-verification** — all 7 nights read clean under `--dry-run --notifier
+      console`, exit 0, and a real `lowest_ever` fired on 13/09 (R$ 324,50 → R$ 308,00),
+      so the alert path still works. Console-only deliberately, to avoid double-alerting
+      alongside cron; dry-run writes nothing, so cron still delivers that low itself.
+
 ## Next — in priority order
 - [ ] **Confirm the alert volume feels right, now at seven nights.** Only
       `lowest_ever` is armed, so volume tracks how often a record breaks, not the poll
@@ -123,20 +153,10 @@ he is only tracking.
       untested against the live site. Expected: `matriz_preco` empty → `[]` → "nothing
       on sale", no alert, no crash. Expected, not observed — and note that the three
       box-office sell-outs did **not** produce it, so they are not the test case.
-- [ ] 🔴 **A genuinely empty read CRASHES the run — reproduced, not theorised.**
-      `filters.py` guards against a typo'd field with `any(field in r.extra for r in
-      readings)`, which is **vacuously False on `[]`**. So a date with no listings
-      raises `FilterError`, and `watch.py` catches it **outside** the per-target loop —
-      one empty night aborts **every target after it** in that run and exits **2
-      (config error)**. It has already happened once in production (`cron.log`).
-      This collapses "sold out" into "broken config", the exact pair the project's
-      first invariant forbids. Verified 2026-09-01 with a control leg: `[]` raises,
-      one real reading passes.
-      **Fix (one line, deliberately NOT applied — Juan's call):** skip the typo check
-      when `readings` is empty; there is nothing to typo-check against. Then `[]`
-      flows to `watch.py`'s existing "nothing on sale" branch, which already handles
-      it. Wants its own known-bad leg in the suite: `[]` → clean, unknown field on a
-      non-empty read → still raises.
-      ⚠️ Now more likely to bite: the three box-office sell-outs are the nights
-      closest to going genuinely empty, and 06/09 sorts FIRST on the `*/5` line — so
-      it would take 07/09, 12/09 and 13/09 down with it.
+- [x] ✅ **RESOLVED v1.5 — the empty read no longer crashes the run.** It was two
+      defects, not one: the vacuous `any()` in `filters.py` made `[]` fatal, and
+      `watch.py`'s catch sat outside the loop so *any* `FilterError` was contagious.
+      Both are fixed and pinned by tests that failed first on the old code. What is
+      still **unobserved** is the thing underneath: no live target has ever actually
+      returned `[]`, because the three box-office sell-outs are the *fullest* pages
+      here. The empty path is now proven against a stub, not against this site.
