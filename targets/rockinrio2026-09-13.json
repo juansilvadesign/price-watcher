@@ -21,10 +21,14 @@
       "entry_class": null
     }
   },
-  "_note_rules": "ONLY lowest_ever is enabled (Juan, 2026-09-01), matching the other targets: notify when the price drops below the lowest ever recorded, and nothing else. Each successive new low fires again because the record moves down with it. below_threshold is configured at the R$ 435,00 meia face value but DISABLED -- arming it would be dormant on any night already trading under face, which is the exact trap re-baselined away in v1.1. Flip `enabled` only after checking the night is above it.",
+  "_note_rules": "ONLY lowest_ever is enabled. lowest_in_window is configured but DISABLED here: these are tracking nights, not nights Juan would buy, so an expiring-baseline rule would add alerts he cannot act on. Flip `enabled` to arm it.",
   "rules": {
     "lowest_ever": {
       "enabled": true
+    },
+    "lowest_in_window": {
+      "enabled": false,
+      "window_hours": 6
     },
     "below_threshold": {
       "enabled": false,

@@ -1,6 +1,6 @@
 # price-watcher — Tasks
 
-**State: v1.5, 2026-09-01.** 101 tests green offline. **All seven Rock in Rio nights**
+**State: v1.6, 2026-09-01.** 114 tests green offline. **All seven Rock in Rio nights**
 are live targets, read end to end; alerts fired and verified edge-triggered. Console,
 Windows toast and Telegram delivery are all **confirmed with a real message**. Cron
 runs two cadences: one minute for the three nights he would buy, five for the four
@@ -125,16 +125,64 @@ he is only tracking.
       so the alert path still works. Console-only deliberately, to avoid double-alerting
       alongside cron; dry-run writes nothing, so cron still delivers that low itself.
 
+## Done — v1.6 (2026-09-01)
+
+- [x] 🔴 **`lowest_ever` ratchets shut — and the buy day is when its bar is highest.**
+      Every record it sets raises its own bar, so the rule gets *quieter the longer it
+      runs*, which is exactly inverted from the need: Juan buys on the day. Measured on
+      2026-09-01, the three buy nights needed **−9,1 % (04/09)**, **−26,7 % (05/09)** and
+      *any* dip **(11/09)** before `lowest_ever` would say a word.
+- [x] **New rule `lowest_in_window`** — beats everything standing in the last N hours.
+      Its baseline expires, so it cannot ratchet. Armed at **`window_hours: 6`** on the
+      three buy nights (04, 05, 11/09); configured-but-disabled on the four tracking
+      nights, where an extra alert is one he cannot act on.
+- [x] ⭐ **The change log made this harder than it looks, and the fix does two jobs.**
+      `append_if_changed` means a window can hold **zero rows** while the price was
+      perfectly well defined — it just never moved. A naive `min` over rows inside the
+      window reads that as "no data" when it means "no change". So
+      `History.min_price_cents_since` **carries the last run before the cutoff forward**.
+      That same carry-forward is what keeps the rule **edge-triggered**: without it a
+      price returning to a level it already held inside the window reads as a fresh low,
+      and an oscillating market re-alerts on every swing back.
+- [x] **Known-bad rerun against a naive window query** — swapped in the no-carry-forward
+      version and got exactly the 3 predicted failures, with the false alert printed
+      verbatim: `6h LOW — R$ 250,00 … beating R$ 300,00` on a price the market had
+      already held. Controls passed both ways.
+- [x] **Permit *and* refuse legs against the real history files**, not just fixtures:
+      one centavo under the live 6h baseline fires on all three buy nights; exactly at
+      the baseline is silent.
+- [x] **Registry guards** — `lowest_in_window` enabled without `window_hours` refuses to
+      load, as do `0`, negative, string and **boolean** windows (`isinstance(True, int)`
+      is True in Python, so a bare `true` would otherwise load as a plausible 1-hour
+      window nobody wrote). Plus a control leg proving a valid window still loads.
+- [x] **The shipped-target pin now encodes intent per night** instead of "only
+      `lowest_ever`", and asserts the buy-night set is actually present — otherwise a
+      renamed id would make that branch vacuous and the pin would guard nothing.
+      Verified by mis-arming 06/09: it fails and names the target.
+- [x] **`if __name__` guard moved to the end of `test_rules.py`** — two classes sat
+      below it. Latent rather than live (⚠️ `discover` imports the module, so they were
+      collected; a direct run of this file fails at import anyway), but it is the same
+      defect v1.4 fixed in `test_buyticketbrasil.py`.
+- [x] 101 → **114 tests**, still fully offline.
+
 ## Next — in priority order
-- [ ] **Confirm the alert volume feels right, now at seven nights.** Only
-      `lowest_ever` is armed, so volume tracks how often a record breaks, not the poll
-      rate — but there are now 7 targets breaking records instead of 3. If it is too
-      much, the honest lever is a *floor*: there is no rule today for "a new low, but
-      only if it is at least N% below the last record".
+- [x] ✅ **Alert volume: MEASURED, not guessed — and it is not the problem.** Over the
+      first **329 cron runs** the armed rules fired **6 times (1,8 %)**. The *floor*
+      idea (a new low only if ≥ N% below the last record) would have been tuning down a
+      signal that was never noisy — dropped rather than built. The real defect was the
+      opposite one: too *few* alerts on the day that matters, which is what
+      `lowest_in_window` addresses. ⚠️ Re-measure once the window rule has run a full
+      day; 6h of history is not yet a rate for it.
 - [ ] ⛔ **n8n fallback scheduler — considered and declined 2026-09-01 (Juan).** cron
       already runs under systemd here; n8n would add a Docker dependency, its own
       gotcha corpus, and could not drive the Windows toast sink. Revisit only if cron
       proves unreliable.
+- [ ] ⚠️ **`lowest_in_window` is near-degenerate until the history outgrows the window.**
+      With ~7h of log and a 6h window it is very nearly `lowest_ever` under another
+      name. Measured 2026-09-01: the 6h baseline equalled the all-time baseline on all
+      **7** targets. That is the instrument reading its own youth, not a finding — see
+      [[feedback_identical_values_across_items_measure_the_instrument]]. It becomes
+      genuinely selective as the log ages; by 04/09 there will be ~3 days of it.
 - [ ] 🔴 **A new target file is no longer enough.** Since the cadence split, both cron
       lines name their targets with `--only`, so a target in `targets/` that is in
       neither list is never polled — while `--list` still shows it `[on ]`. Add the id

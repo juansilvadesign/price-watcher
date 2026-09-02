@@ -24,7 +24,7 @@ pricewatch/
     buyticketbrasil.py   site #1
 targets/*.json           one file per thing being watched
 history/*.jsonl          append-only price record
-tests/                   101 tests, fully offline (real captured fixture)
+tests/                   114 tests, fully offline (real captured fixture)
 ```
 
 **Zero dependencies.** Python 3.10+ standard library only — no venv needed, nothing
@@ -38,7 +38,7 @@ python3 watch.py --verbose             # print every listing, not just the cheap
 python3 watch.py --only rockinrio2026-09-04
 python3 watch.py --dry-run             # fetch + evaluate, write nothing
 python3 watch.py --list                # show the registry
-python3 -m unittest discover -s tests -t .   # 101 tests, no network
+python3 -m unittest discover -s tests -t .   # 114 tests, no network
 ```
 
 Exit codes: `0` clean · `1` at least one adapter failed · `2` configuration error ·
@@ -64,8 +64,8 @@ PATH=/usr/local/bin:/usr/bin:/bin:/mnt/c/Windows/System32/WindowsPowerShell/v1.0
 */5 * * * * /usr/bin/python3 /abs/path/watch.py --only rockinrio2026-09-06 rockinrio2026-09-07 rockinrio2026-09-12 rockinrio2026-09-13 >> /abs/path/history/cron.log 2>&1
 ```
 
-**Two cadences, deliberately.** With only `lowest_ever` armed, alert volume is set by
-how often a record is broken — not by the poll rate — so polling fast costs
+**Two cadences, deliberately.** With only record-beating rules armed, alert volume is
+set by how often a record is broken — not by the poll rate — so polling fast costs
 notifications nothing and buys the ability to catch a dip that appears and sells
 inside a gap. What it costs is **requests**. All seven nights at one minute would be
 **~10,080/day** against a single site; the three you would buy at one minute plus the
@@ -97,7 +97,8 @@ in `cron.log` and you never read it. If you are scheduling this, set
 ⚠️ **The interval and the armed rules have to be chosen together.** A fast poll with
 a sensitive rule (`price_changed`) is a notification firehose; a fast poll with
 `lowest_ever` alone is quiet, because a record can only be broken so often. This
-project ships the second combination.
+project ships the second combination. Measured over the first 329 cron runs, the
+armed rules fired **6 times — 1.8% of runs**.
 
 ## Adding a target
 
@@ -127,7 +128,7 @@ whatever the adapter puts in a reading's `extra` map. `null` means "all values" 
 is a documented no-op. `min_quantity` defaults to **1** — sold-out rows still carry
 a price and would otherwise win every `min()`.
 
-**Rules.** All three are **edge-triggered**: they fire on a transition, not a state,
+**Rules.** All of them are **edge-triggered**: they fire on a transition, not a state,
 so a cron job does not re-alert every tick and train you to ignore it.
 
 | rule | fires when | needs |
@@ -136,10 +137,23 @@ so a cron job does not re-alert every tick and train you to ignore it.
 | `below_threshold` | the cheapest *crosses down* to at-or-below your ceiling | `price_brl` |
 | `drop_pct` | the cheapest fell ≥ N% since the previous run | `pct` |
 | `price_changed` | the cheapest moved **at all** since the previous run | `direction` (`any`/`down`/`up`), optional `min_delta_brl` |
+| `lowest_in_window` | this run beats everything standing in the last N hours | `window_hours` |
 
-**As shipped, only `lowest_ever` is armed.** The other three are configured but
-disabled — flip `enabled` to re-arm one. That is deliberate: the goal is *"tell me
-when it drops below the lowest I have seen, and nothing else."*
+**As shipped, `lowest_ever` is armed everywhere and `lowest_in_window` on the three
+nights you would actually buy.** The rest are configured but disabled — flip `enabled`
+to re-arm one.
+
+⭐ **Why both.** `lowest_ever` **ratchets shut**: every record it sets raises its own
+bar, so the longer it runs the less likely it is to speak — and the day you buy is the
+day its bar is highest. On 2026-09-01 the 05/09 night was trading at R$ 330,00 against
+a R$ 242,00 record: a **26.7% fall** before it would have said anything. A rolling
+window cannot ratchet, because its baseline expires. The two answer different
+questions — *"is this the best price ever?"* versus *"is this the best price right
+now?"* — and on a buying day you need the second.
+
+⚠️ **`lowest_in_window` is near-degenerate until the history is older than the
+window.** With 6h of history and a 6h window it is just `lowest_ever` wearing a
+different name; it only becomes selective as the log ages past `window_hours`.
 
 Each successive record fires again, with no cooldown: if the record is R$ 230,00 and
 the price hits R$ 228,00 it alerts, and when it hits R$ 220,00 a minute later it

@@ -1,3 +1,4 @@
+import datetime as _dt
 import tempfile
 import unittest
 from pathlib import Path
@@ -149,10 +150,6 @@ class TestEvaluate(RuleCase):
         self.assertEqual(self.history.last_run_min_cents("t1"), 28000)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class TestSuccessiveNewLows(RuleCase):
     """Juan's stated requirement, 2026-09-01, encoded verbatim.
 
@@ -184,12 +181,26 @@ class TestSuccessiveNewLows(RuleCase):
         self.seed((23000,), (40000,))
         self.assertEqual(rules.evaluate(t, [reading(37000)], self.history), [])
 
-    def test_only_lowest_ever_is_armed_on_the_shipped_targets(self):
+    def test_the_shipped_targets_arm_exactly_the_intended_rules(self):
+        """Pinned per night rather than as a blanket rule.
+
+        `lowest_in_window` is armed ONLY on the three nights Juan would actually buy;
+        on a tracking night it would only add alerts he cannot act on. Everything else
+        stays off — that was an explicit call, not an oversight.
+        """
         from pathlib import Path
         from pricewatch.registry import load_targets
+        BUY = {"rockinrio2026-09-04", "rockinrio2026-09-05", "rockinrio2026-09-11"}
+        seen = set()
         for t in load_targets(Path(__file__).resolve().parent.parent / "targets"):
             armed = sorted(n for n, c in t.rules.items() if c.get("enabled"))
-            self.assertEqual(armed, ["lowest_ever"], f"{t.id} has {armed} armed")
+            expected = (["lowest_ever", "lowest_in_window"] if t.id in BUY
+                        else ["lowest_ever"])
+            self.assertEqual(armed, expected, f"{t.id} has {armed} armed")
+            seen.add(t.id)
+        # Without this the buy-night branch goes vacuous the moment an id is renamed,
+        # and the pin would keep passing while guarding nothing.
+        self.assertEqual(BUY - seen, set(), "a buy night is missing from targets/")
 
 
 class TestChangeOnlyRecording(RuleCase):
@@ -227,3 +238,77 @@ class TestChangeOnlyRecording(RuleCase):
     def test_an_empty_run_is_never_treated_as_unchanged(self):
         """Sold out is data, but it must not silently look like 'nothing happened'."""
         self.assertFalse(self.history.append_if_changed("t1", []))
+
+
+class TestLowestInWindow(RuleCase):
+    """A rolling-window low -- and the change-log trap sitting underneath it.
+
+    `lowest_ever` ratchets shut: every record it sets raises its own bar, so it is
+    quietest exactly when you most need it (the day you buy). This rule's baseline
+    expires instead, so it cannot ratchet.
+    """
+
+    def seed_at(self, *runs):
+        """Each arg is (hours_ago, price_cents) -- one recorded run, one price."""
+        for hours_ago, price in runs:
+            ts = (_dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(hours=hours_ago)
+                  ).replace(microsecond=0).isoformat()
+            self.history.append("t1", [reading(price, ts)])
+
+    def target(self, hours=6):
+        return make_target(rules={"lowest_in_window":
+                                  {"enabled": True, "window_hours": hours}})
+
+    # --- ordinary behaviour ----------------------------------------------------
+    def test_fires_when_it_beats_the_window(self):
+        self.seed_at((3, 30000), (1, 29000))
+        self.assertIsNotNone(rules.lowest_in_window(self.target(), [reading(28000)], self.history))
+
+    def test_silent_when_equal_to_the_window_low(self):
+        self.seed_at((1, 29000))
+        self.assertIsNone(rules.lowest_in_window(self.target(), [reading(29000)], self.history))
+
+    def test_silent_on_the_very_first_run(self):
+        self.assertIsNone(rules.lowest_in_window(self.target(), [reading(1)], self.history))
+
+    # --- the change log's carry-forward ----------------------------------------
+    def test_a_window_with_no_rows_reads_the_standing_price_not_no_data(self):
+        """`append_if_changed` means an empty window is usually "nothing moved", not
+        "nothing known". Without the carry-forward the baseline is None and the rule
+        goes silent on a real dip."""
+        self.seed_at((30, 30000))          # far outside a 6h window, still standing
+        self.assertIsNotNone(rules.lowest_in_window(self.target(), [reading(28000)], self.history))
+
+    def test_known_bad_leg_returning_to_a_price_already_held_in_the_window(self):
+        """Without the carry-forward this fires -- falsely, and repeatedly.
+
+        The price stood at 250 when the window opened, rose to 300, and has now come
+        back to 250. That is a return, not a new low; a market oscillating inside the
+        window would re-alert on every swing back, which is level-triggering in
+        disguise. A naive `min` over rows *inside* the window sees only 300 and fires.
+        """
+        self.seed_at((10, 25000), (5, 30000))
+        self.assertIsNone(rules.lowest_in_window(self.target(), [reading(25000)], self.history))
+
+    def test_control_a_genuine_new_low_in_that_same_shape_still_fires(self):
+        """Pairs with the leg above: the carry-forward must not simply mute the rule."""
+        self.seed_at((10, 25000), (5, 30000))
+        self.assertIsNotNone(rules.lowest_in_window(self.target(), [reading(24000)], self.history))
+
+    # --- why the rule exists ---------------------------------------------------
+    def test_it_speaks_where_lowest_ever_has_ratcheted_shut(self):
+        """Juan's 05/09 shape on 2026-09-01: an all-time record set days ago, the
+        market trading far above it since, and a real dip today. `lowest_ever` cannot
+        see the dip; the window can."""
+        self.seed_at((72, 25000), (70, 34000))
+        t = make_target(rules={"lowest_ever": {"enabled": True},
+                               "lowest_in_window": {"enabled": True, "window_hours": 6}})
+        now = [reading(30000)]
+        self.assertIsNone(rules.lowest_ever(t, now, self.history),
+                          "lowest_ever should be silent -- 300 is nowhere near the 250 record")
+        self.assertIsNotNone(rules.lowest_in_window(t, now, self.history),
+                             "the window should still see 340 -> 300 as today's low")
+
+
+if __name__ == "__main__":
+    unittest.main()

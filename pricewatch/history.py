@@ -6,6 +6,7 @@ the same reason the surrounding workspace keeps everything in Markdown and JSON.
 
 from __future__ import annotations
 
+import datetime as _dt
 import json
 from pathlib import Path
 
@@ -73,6 +74,47 @@ class History:
         """Cheapest price ever recorded for this target, or None if no history."""
         prices = [r["price_cents"] for r in self.load(target_id) if r.get("price_cents") is not None]
         return min(prices) if prices else None
+
+    def min_price_cents_since(self, target_id: str, cutoff: _dt.datetime) -> int | None:
+        """Cheapest price standing at any point in [cutoff, now], or None if no history.
+
+        ⚠️ The load-bearing subtlety is `append_if_changed`: this file is a **change
+        log**, so a window can legitimately contain ZERO rows while the price was
+        perfectly well defined throughout -- it simply never moved. A plain `min` over
+        the rows inside the window would read that as "no data", when it actually means
+        "no change". Those are opposites, and confusing them is the same shape of bug
+        as collapsing `[]` into a broken adapter.
+
+        So the last run recorded strictly BEFORE the cutoff is carried forward into the
+        window: under change-log semantics that price was still standing when the
+        window opened.
+
+        ⭐ That carry-forward does a second job, and it is why this cannot be a naive
+        window query. Without it a price that never moves would re-fire a window rule
+        forever: the old low eventually slides out of the window, the remaining minimum
+        rises, and the unchanged current price reads as a fresh "window low" on a market
+        that did nothing. Carrying the standing price in keeps the rule edge-triggered,
+        which is a project invariant, not a preference.
+        """
+        pool: list[int] = []
+        before: list[tuple[_dt.datetime, int]] = []
+        latest_before: _dt.datetime | None = None
+
+        for r in self.load(target_id):
+            price = r.get("price_cents")
+            if price is None:
+                continue
+            ts = _dt.datetime.fromisoformat(r["captured_at"])
+            if ts >= cutoff:
+                pool.append(price)
+            else:
+                before.append((ts, price))
+                if latest_before is None or ts > latest_before:
+                    latest_before = ts
+
+        if latest_before is not None:
+            pool += [p for ts, p in before if ts == latest_before]
+        return min(pool) if pool else None
 
     def last_run_min_cents(self, target_id: str) -> int | None:
         """Cheapest price in the most recent run (grouped by captured_at)."""

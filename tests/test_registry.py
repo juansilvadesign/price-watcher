@@ -102,5 +102,51 @@ class TestRealTargets(unittest.TestCase):
                             "a disabled rule must keep its parameter for re-arming")
 
 
+class TestWindowRuleValidation(unittest.TestCase):
+    """`lowest_in_window` joins the "enabled without its parameter must refuse to
+    load" contract. A window rule that silently defaults would look armed and never
+    fire -- the same failure shape the registry exists to prevent."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.dir = Path(self.tmp.name)
+        self.addCleanup(self.tmp.cleanup)
+
+    def load(self, rule_cfg):
+        cfg = dict(VALID, id="x", rules={"lowest_in_window": rule_cfg})
+        p = self.dir / "x.json"
+        p.write_text(json.dumps(cfg), encoding="utf-8")
+        return load_target(p)
+
+    def test_enabled_without_window_hours_refuses_to_load(self):
+        with self.assertRaises(ConfigError):
+            self.load({"enabled": True})
+
+    def test_zero_and_negative_windows_refuse_to_load(self):
+        for bad in (0, -1, -0.5):
+            with self.subTest(bad=bad), self.assertRaises(ConfigError):
+                self.load({"enabled": True, "window_hours": bad})
+
+    def test_a_boolean_window_refuses_to_load(self):
+        """`isinstance(True, int)` is True in Python, so a bare `true` would otherwise
+        load as a plausible-looking 1-hour window nobody wrote."""
+        with self.assertRaises(ConfigError):
+            self.load({"enabled": True, "window_hours": True})
+
+    def test_a_string_window_refuses_to_load(self):
+        with self.assertRaises(ConfigError):
+            self.load({"enabled": True, "window_hours": "6"})
+
+    def test_a_valid_window_loads(self):
+        """Control leg: the refusals above must not be a rule that never loads."""
+        t = self.load({"enabled": True, "window_hours": 6})
+        self.assertEqual(t.rules["lowest_in_window"]["window_hours"], 6)
+
+    def test_a_disabled_rule_is_not_validated(self):
+        """Consistent with the other rules: disabled config is inert, not checked."""
+        t = self.load({"enabled": False})
+        self.assertFalse(t.rules["lowest_in_window"]["enabled"])
+
+
 if __name__ == "__main__":
     unittest.main()

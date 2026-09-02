@@ -4,12 +4,14 @@ Every rule is evaluated against the history as it stood BEFORE this run's readin
 were appended -- otherwise the current run is its own baseline and no rule can ever
 fire. `watch.py` enforces that ordering.
 
-All three rules are edge-triggered: they fire on a transition, not on a state. A
+Every rule is edge-triggered: they fire on a transition, not on a state. A
 level-triggered "still below your ceiling" would re-alert on every cron tick and
 train you to ignore it.
 """
 
 from __future__ import annotations
+
+import datetime as _dt
 
 from .models import Alert, Reading, fmt_brl
 
@@ -124,6 +126,51 @@ def price_changed(target, readings, history) -> Alert | None:
         reading=now,
     )
 
+
+def lowest_in_window(target, readings, history) -> Alert | None:
+    """Fires when this run beats everything standing in the last N hours.
+
+    `lowest_ever` answers "is this the best price ever?". On the day you actually buy,
+    the question is "is this the best price *right now*?" -- and the two diverge in a
+    predictable direction, because `lowest_ever` **ratchets shut**. Every record it
+    sets raises its own bar, so the longer it runs the less likely it is to speak, and
+    the day you need it most is the day its bar is highest. A rolling window cannot
+    ratchet: its baseline expires.
+
+    Edge-triggered like every other rule here -- see `History.min_price_cents_since`
+    for the carry-forward that keeps it that way over a change log.
+    """
+    cfg = target.rules["lowest_in_window"]
+    hours = cfg["window_hours"]
+    now = _cheapest(readings)
+    if now is None:
+        return None
+    cutoff = _dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(hours=hours)
+    prior = history.min_price_cents_since(target.id, cutoff)
+    if prior is None:
+        return None  # no history yet -- silent for the same reason lowest_ever is
+    if now.price_cents >= prior:
+        return None
+    return Alert(
+        target_id=target.id,
+        rule="lowest_in_window",
+        headline=f"{hours:g}h LOW — {fmt_brl(now.price_cents)}",
+        detail=(f"{now.item} at {fmt_brl(now.price_cents)} (qty {now.quantity}) is the "
+                f"cheapest in {hours:g}h, beating {fmt_brl(prior)}."),
+        reading=now,
+    )
+
+
+def _validate_window_hours(cfg: dict) -> str | None:
+    h = cfg.get("window_hours")
+    # `isinstance(True, int)` is True, so a bare `true` in JSON would otherwise sail
+    # through as a 1-hour window -- configured, plausible-looking, and not what anyone
+    # wrote it to mean.
+    if isinstance(h, bool) or not isinstance(h, (int, float)) or h <= 0:
+        return f"window_hours must be a positive number, got {h!r}"
+    return None
+
+
 def _validate_direction(cfg: dict) -> str | None:
     if cfg.get("direction") not in ("any", "down", "up"):
         return f"direction must be one of any/down/up, got {cfg.get('direction')!r}"
@@ -135,10 +182,11 @@ def _validate_direction(cfg: dict) -> str | None:
 #: or with a nonsense value — fails loudly at load time instead of silently never
 #: firing.
 RULES = {
-    "lowest_ever":     (lowest_ever,     (),               None),
-    "below_threshold": (below_threshold, ("price_cents",), None),
-    "drop_pct":        (drop_pct,        ("pct",),         None),
-    "price_changed":   (price_changed,   ("direction",),   _validate_direction),
+    "lowest_ever":      (lowest_ever,      (),                 None),
+    "below_threshold":  (below_threshold,  ("price_cents",),   None),
+    "drop_pct":         (drop_pct,         ("pct",),           None),
+    "price_changed":    (price_changed,    ("direction",),     _validate_direction),
+    "lowest_in_window": (lowest_in_window, ("window_hours",),  _validate_window_hours),
 }
 
 
