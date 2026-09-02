@@ -1,0 +1,43 @@
+{
+  "id": "rockinrio2026-09-13",
+  "label": "Rock in Rio 2026 — 13/09 (dom) · Gramado",
+  "adapter": "buyticketbrasil",
+  "enabled": true,
+  "params": {
+    "event_slug": "rockinrio2026",
+    "data_millis": 1789347600000,
+    "evento_local": "1765323829346x381107157350744060",
+    "cidade": "Rio de Janeiro"
+  },
+  "_note_supply": "On sale at the box office when observed 2026-09-01. Cheapest Gramado R$ 275,00 -- tied with 04/09 as the cheapest of the seven nights.",
+  "_note_face_value": "Gramado face value (Juan, 2026-09-01): Inteira R$ 870,00 / Meia R$ 435,00. Because the gate does not check class, R$ 435,00 is the effective benchmark for the cheapest usable ticket -- anything above it is a resale premium. Documentation only: no rule reads this field.",
+  "_note_filters": "Gramado only (Juan's call 2026-09-01). entry_class is deliberately unfiltered: Rock in Rio does not check ticket type at the gate, so any class is usable and the cheapest one wins. Set extra.sector to null to watch all 6 sectors.",
+  "filters": {
+    "min_quantity": 1,
+    "extra": {
+      "sector": [
+        "Gramado"
+      ],
+      "entry_class": null
+    }
+  },
+  "_note_rules": "ONLY lowest_ever is enabled (Juan, 2026-09-01), matching the other targets: notify when the price drops below the lowest ever recorded, and nothing else. Each successive new low fires again because the record moves down with it. below_threshold is configured at the R$ 435,00 meia face value but DISABLED -- arming it would be dormant on any night already trading under face, which is the exact trap re-baselined away in v1.1. Flip `enabled` only after checking the night is above it.",
+  "rules": {
+    "lowest_ever": {
+      "enabled": true
+    },
+    "below_threshold": {
+      "enabled": false,
+      "price_brl": 435.0
+    },
+    "drop_pct": {
+      "enabled": false,
+      "pct": 5.0
+    },
+    "price_changed": {
+      "enabled": false,
+      "direction": "any",
+      "min_delta_brl": 0.01
+    }
+  }
+}
