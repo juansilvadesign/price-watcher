@@ -1,9 +1,10 @@
 # price-watcher — Tasks
 
-**State: v1.1, 2026-09-01.** 69 tests green offline. Three live targets read end to
-end; alerts fired and verified edge-triggered across three runs. Console + Windows
-toast delivery **confirmed visually on the desktop**; Telegram is wired and tested
-offline but has **never delivered a real message** — it is blocked on a chat id.
+**State: v1.4, 2026-09-01.** 93 tests green offline. **All seven Rock in Rio nights**
+are live targets, read end to end; alerts fired and verified edge-triggered. Console,
+Windows toast and Telegram delivery are all **confirmed with a real message**. Cron
+runs two cadences: one minute for the three nights he would buy, five for the four
+he is only tracking.
 
 ## Done — v1 (2026-09-01)
 
@@ -62,17 +63,52 @@ offline but has **never delivered a real message** — it is blocked on a chat i
       would reach ~190 MB by 13/09 and re-parse ~414,000 lines per run.
 - [x] Juan's requirement encoded verbatim as a test (`TestSuccessiveNewLows`).
 
+## Done — v1.4 (2026-09-01)
+
+- [x] **The remaining four nights are shipped** — 06/09, 07/09, 12/09, 13/09. Same
+      shape as the other three: Gramado, entry class unfiltered, `lowest_ever` alone
+      armed. Registry now loads **7 targets**.
+- [x] 🔴 **"Sold out" was checked, not assumed — and it was the opposite of empty.**
+      06/09, 07/09 and 12/09 have no box-office inventory, and were among the *fullest*
+      pages on buyticketbrasil that day: 207–253 Gramado *Inteira* each, priced 60–140%
+      above the nights still officially on sale. This site is the **secondary** market,
+      so an official sell-out *creates* its supply. Consequence: no restock rule was
+      needed, and `lowest_ever` baselines and fires on them normally. Had it been taken
+      at face value, the obvious move would have been a `[]`→non-`[]` restock rule that
+      could never fire, on three targets that were never empty.
+- [x] **Face value recorded** — Gramado *Inteira* R$ 870,00 / *Meia* R$ 435,00. Lives in
+      each new target's `_note_face_value` and in the README. ⛔ **No rule reads it.**
+      `below_threshold` ships at R$ 435,00 but **disabled**, because arming a ceiling on
+      a night already under face is dormant on arrival — the v1.1 trap.
+- [x] **Status is dated, not baked into labels.** The box-office column carries
+      `2026-09-01`; the target labels do not say "sold out", because a label is what an
+      alert shows you and that claim goes stale silently.
+- [x] 🔴 **Split cron cadence** — `* * * * *` for 04/09, 05/09, 11/09; `*/5 * * * *` for
+      06/09, 07/09, 12/09, 13/09, both via `--only`. Seven nights on the one-minute line
+      would have been **~10,080 requests/day** to one site; the split is **~5,472/day**
+      with no lost resolution on the nights a purchase would actually happen.
+      Both lines verified under a stripped `env -i` before installing.
+- [x] **Two pinned tests extended 3 → 7** — the shipped-target count and the verbatim
+      per-night URL map. Both *failed first* on the new files, which is what they are for.
+- [x] **A test class that never ran** — `TestShippedTargetUrls` sat below
+      `if __name__ == "__main__"` in `test_buyticketbrasil.py`, so a direct
+      `python3 tests/test_buyticketbrasil.py` collected 10 tests and silently skipped it.
+      Guard moved to the end; the direct run now collects 12.
+
 ## Next — in priority order
-- [ ] **Confirm the alert volume feels right.** Only `lowest_ever` is armed and the
-      poll is every minute, so volume tracks how often a record breaks, not the poll
-      rate. If it is still too much, the honest lever is a *floor* — there is no rule
-      today for "a new low, but only if it is at least N% below the last record".
+- [ ] **Confirm the alert volume feels right, now at seven nights.** Only
+      `lowest_ever` is armed, so volume tracks how often a record breaks, not the poll
+      rate — but there are now 7 targets breaking records instead of 3. If it is too
+      much, the honest lever is a *floor*: there is no rule today for "a new low, but
+      only if it is at least N% below the last record".
 - [ ] ⛔ **n8n fallback scheduler — considered and declined 2026-09-01 (Juan).** cron
       already runs under systemd here; n8n would add a Docker dependency, its own
       gotcha corpus, and could not drive the Windows toast sink. Revisit only if cron
       proves unreliable.
-- [ ] **The other 4 Rock in Rio dates** — ids are in the README table, one JSON file
-      each. Only if you would actually consider those nights.
+- [ ] 🔴 **A new target file is no longer enough.** Since the cadence split, both cron
+      lines name their targets with `--only`, so a target in `targets/` that is in
+      neither list is never polled — while `--list` still shows it `[on ]`. Add the id
+      to a crontab line at the same time you add the file.
 
 ## Known-unknown — do not assume
 
@@ -83,6 +119,24 @@ offline but has **never delivered a real message** — it is blocked on a chat i
 - [ ] `preco_destaque` (`{tipo, entrada, valor}`, R$ 10.000,00 on 04/09) is
       unexplained — presumably a strike-through anchor. **Do not build a "% off"
       rule on it** until someone confirms what it means.
-- [ ] Behaviour when an event sells out entirely, or when a date passes, is
+- [ ] Behaviour when an event sells out entirely, or when a date passes, is **still**
       untested against the live site. Expected: `matriz_preco` empty → `[]` → "nothing
-      on sale", no alert, no crash. Expected, not observed.
+      on sale", no alert, no crash. Expected, not observed — and note that the three
+      box-office sell-outs did **not** produce it, so they are not the test case.
+- [ ] 🔴 **A genuinely empty read CRASHES the run — reproduced, not theorised.**
+      `filters.py` guards against a typo'd field with `any(field in r.extra for r in
+      readings)`, which is **vacuously False on `[]`**. So a date with no listings
+      raises `FilterError`, and `watch.py` catches it **outside** the per-target loop —
+      one empty night aborts **every target after it** in that run and exits **2
+      (config error)**. It has already happened once in production (`cron.log`).
+      This collapses "sold out" into "broken config", the exact pair the project's
+      first invariant forbids. Verified 2026-09-01 with a control leg: `[]` raises,
+      one real reading passes.
+      **Fix (one line, deliberately NOT applied — Juan's call):** skip the typo check
+      when `readings` is empty; there is nothing to typo-check against. Then `[]`
+      flows to `watch.py`'s existing "nothing on sale" branch, which already handles
+      it. Wants its own known-bad leg in the suite: `[]` → clean, unknown field on a
+      non-empty read → still raises.
+      ⚠️ Now more likely to bite: the three box-office sell-outs are the nights
+      closest to going genuinely empty, and 06/09 sorts FIRST on the `*/5` line — so
+      it would take 07/09, 12/09 and 13/09 down with it.

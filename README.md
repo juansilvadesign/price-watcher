@@ -16,7 +16,7 @@ pricewatch/
   models.py              Reading / Alert / AdapterError, money as integer centavos
   registry.py            targets/*.json -> validated Target objects
   filters.py             target-side filtering (allow-list + deny-list)
-  rules.py               the three alert rules
+  rules.py               the four alert rules
   history.py             append-only JSONL, one file per target
   notify.py              Notifier interface + console sink
   adapters/
@@ -24,7 +24,7 @@ pricewatch/
     buyticketbrasil.py   site #1
 targets/*.json           one file per thing being watched
 history/*.jsonl          append-only price record
-tests/                   45 tests, fully offline (real captured fixture)
+tests/                   93 tests, fully offline (real captured fixture)
 ```
 
 **Zero dependencies.** Python 3.10+ standard library only — no venv needed, nothing
@@ -38,7 +38,7 @@ python3 watch.py --verbose             # print every listing, not just the cheap
 python3 watch.py --only rockinrio2026-09-04
 python3 watch.py --dry-run             # fetch + evaluate, write nothing
 python3 watch.py --list                # show the registry
-python3 -m unittest discover -s tests -t .   # 45 tests, no network
+python3 -m unittest discover -s tests -t .   # 93 tests, no network
 ```
 
 Exit codes: `0` clean · `1` at least one adapter failed · `2` configuration error ·
@@ -46,19 +46,36 @@ Exit codes: `0` clean · `1` at least one adapter failed · `2` configuration er
 
 ### Running it unattended
 
-Nothing is scheduled for you. When you want it running, add one line to `crontab -e`:
+Two cron lines, one per cadence:
 
 ```cron
 MAILTO=""
 PATH=/usr/local/bin:/usr/bin:/bin:/mnt/c/Windows/System32/WindowsPowerShell/v1.0
-* * * * * /usr/bin/python3 /abs/path/watch.py >> /abs/path/history/cron.log 2>&1
+
+# the nights you would actually buy
+* * * * * /usr/bin/python3 /abs/path/watch.py --only rockinrio2026-09-04 rockinrio2026-09-05 rockinrio2026-09-11 >> /abs/path/history/cron.log 2>&1
+
+# the nights you are only tracking
+*/5 * * * * /usr/bin/python3 /abs/path/watch.py --only rockinrio2026-09-06 rockinrio2026-09-07 rockinrio2026-09-12 rockinrio2026-09-13 >> /abs/path/history/cron.log 2>&1
 ```
 
-**Every minute, deliberately.** With only `lowest_ever` armed, alert volume is set by
+**Two cadences, deliberately.** With only `lowest_ever` armed, alert volume is set by
 how often a record is broken — not by the poll rate — so polling fast costs
 notifications nothing and buys the ability to catch a dip that appears and sells
-inside a gap. The cost is request volume: **3 requests/minute (~4,320/day)**. Back off
-by changing `* * * * *` to `*/5 * * * *`.
+inside a gap. What it costs is **requests**. All seven nights at one minute would be
+**~10,080/day** against a single site; the three you would buy at one minute plus the
+four you are tracking at five is **~5,472/day**, with no loss of resolution where a
+purchase would actually happen.
+
+🔴 **`--only` is load-bearing on BOTH lines.** `watch.py` with no `--only` runs every
+enabled target, so a missing flag on the `*/5` line silently puts all seven back on
+the one-minute schedule — and the output looks almost identical, four extra blocks
+being the only tell.
+
+🔴 **A target in `targets/` but named in neither `--only` list is never polled.**
+Since the split, adding a target file is no longer enough — the crontab has to name
+it too. This is the failure mode that looks most like everything working: the file is
+valid, `--list` shows it `[on ]`, and nothing ever reads it.
 
 No `cd` is needed — targets, history and `.env` all resolve relative to the source
 file, not the working directory.
@@ -250,19 +267,39 @@ What the recon established, and why the adapter looks the way it does:
 
 ### Rock in Rio 2026
 
-Seven dates, 04/09–13/09. The three shipped targets are 04/09, 05/09 and 11/09.
-The other four resolve the same way — `data_millis` and `evento_local` come from
-the listing page at `/datas/rockinrio2026`:
+Seven dates, 04/09–13/09 — **all seven are shipped targets** as of 2026-09-01.
+`data_millis` and `evento_local` come from the listing page at `/datas/rockinrio2026`:
 
-| BRT date | `data_millis` | `evento_local` |
-|---|---|---|
-| 04/09/2026 | 1788570000000 | 1765323377313x720803947984191500 |
-| 05/09/2026 | 1788656400000 | 1765323572984x293448430956314600 |
-| 06/09/2026 | 1788742800000 | 1765323621728x687317125269815300 |
-| 07/09/2026 | 1788829200000 | 1765323705621x670780912989372400 |
-| 11/09/2026 | 1789174800000 | 1765323734393x441784445622288400 |
-| 12/09/2026 | 1789261200000 | 1765323797528x513509114247905300 |
-| 13/09/2026 | 1789347600000 | 1765323829346x381107157350744060 |
+| BRT date | `data_millis` | `evento_local` | poll | box office · 2026-09-01 |
+|---|---|---|---|---|
+| 04/09/2026 (sex) | 1788570000000 | 1765323377313x720803947984191500 | 1 min | on sale |
+| 05/09/2026 (sáb) | 1788656400000 | 1765323572984x293448430956314600 | 1 min | on sale |
+| 06/09/2026 (dom) | 1788742800000 | 1765323621728x687317125269815300 | 5 min | sold out |
+| 07/09/2026 (seg) | 1788829200000 | 1765323705621x670780912989372400 | 5 min | sold out |
+| 11/09/2026 (sex) | 1789174800000 | 1765323734393x441784445622288400 | 1 min | on sale |
+| 12/09/2026 (sáb) | 1789261200000 | 1765323797528x513509114247905300 | 5 min | sold out |
+| 13/09/2026 (dom) | 1789347600000 | 1765323829346x381107157350744060 | 5 min | on sale |
+
+The box-office column is **dated on purpose** — it was true when observed and nothing
+re-checks it. It is deliberately *not* in the target labels, which is what an alert
+shows you: a label saying "sold out" would keep saying it long after that stopped
+being true.
+
+**Face value, Gramado** (Juan, 2026-09-01): **Inteira R$ 870,00 · Meia R$ 435,00.**
+Because the gate does not check ticket class, R$ 435,00 is the working benchmark for
+the cheapest *usable* ticket — anything above it is resale premium. It is recorded in
+each new target's `_note_face_value` and **no rule reads it.** `below_threshold` ships
+configured at R$ 435,00 but **disabled**: arming a ceiling on a night already trading
+below it produces a rule that is dormant on arrival — the exact trap re-baselined away
+in v1.1. Arm it only on a night currently *above* face.
+
+⚠️ **"Sold out" at the box office does not mean sold out here.** On 2026-09-01, 06/09,
+07/09 and 12/09 had no official inventory left — and were among the *fullest* pages on
+this site that day, 207–253 Gramado *Inteira* listings each, priced 60–140% above the
+nights still officially on sale. buyticketbrasil is the **secondary** market: an
+official sell-out is what creates its supply, not what removes it. So a sold-out date
+still baselines and still fires `lowest_ever` normally. Expect `[]` from a date that
+has genuinely finished — not from one that is merely sold out.
 
 Entry class is deliberately **unfiltered**: Rock in Rio does not check ticket type
 at the gate, so the cheapest class wins. To restrict it — e.g. to the classes you
