@@ -1,11 +1,16 @@
 import base64
+import tempfile
 import unittest
+import urllib.error
 from pathlib import Path
 from unittest import mock
 
 from pricewatch.models import Alert, Reading
 from pricewatch.notify import (ConsoleNotifier, MultiNotifier, NotifyError,
-                               TelegramNotifier, WindowsToastNotifier, configured_names)
+                               TelegramNotifier, WindowsToastNotifier, configured_names,
+                               is_permanent_chat_failure)
+from pricewatch.subscribers import Store, Subscriber, SubscriberError
+from pricewatch.telegram_api import TelegramApiError
 
 
 def alert(headline="NEW LOWEST — R$ 250,00", detail="detail", item="Gramado || Inteira"):
@@ -17,7 +22,12 @@ def alert(headline="NEW LOWEST — R$ 250,00", detail="detail", item="Gramado ||
 
 class TestTelegram(unittest.TestCase):
     def make(self, post):
-        return TelegramNotifier(token="TOK", chat_id="42", post=post)
+        # Pinned to an EMPTY subscriber list on purpose. Left at the default, these
+        # assertions would read the repo's real subscribers.json and start failing the
+        # day a friend is added -- the same ambient-state trap that made
+        # test_missing_chat_id_fails_at_construction pass for the wrong reason.
+        return TelegramNotifier(token="TOK", chat_id="42", post=post,
+                                store=Store("/nonexistent/subscribers.json"))
 
     def test_posts_to_the_right_endpoint_and_chat(self):
         seen = {}
@@ -152,9 +162,6 @@ class TestSelection(unittest.TestCase):
         self.assertEqual(configured_names(None), ["console", "telegram", "toast"])
 
 
-if __name__ == "__main__":
-    unittest.main()
-
 
 class TestBuildDegradation(unittest.TestCase):
     """A secondary channel being unavailable must not cost the run."""
@@ -178,3 +185,231 @@ class TestBuildDegradation(unittest.TestCase):
         from pricewatch import notify
         with self.assertRaises(KeyError):
             notify.build(["nope"])
+
+
+class TelegramFanOutTestCase(unittest.TestCase):
+    """The telegram sink now has TWO tiers of recipient. They are not symmetric, and the
+    asymmetry is the whole feature: exit 3 has to keep meaning "YOU were not told"."""
+
+    OWNER = "42"
+
+    def setUp(self):
+        self._dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self._dir.cleanup)
+        self.path = Path(self._dir.name) / "subscribers.json"
+        self.store = Store(self.path)
+        self.warnings = []
+
+    def subs(self, *rows):
+        """rows: (chat_id, name, enabled)"""
+        self.store.save([Subscriber(name=n, chat_id=c, enabled=e) for c, n, e in rows])
+        return self.store
+
+    def make(self, post, store=None, chat_id=None):
+        return TelegramNotifier(token="TOK", chat_id=chat_id or self.OWNER, post=post,
+                                store=store if store is not None else self.store,
+                                on_warning=self.warnings.append)
+
+
+class FakePost:
+    """Records every send and can fail chosen chats. `sent` is in delivery order."""
+
+    def __init__(self, fail=None):
+        self.sent = []
+        self.fail = fail or {}
+
+    def __call__(self, url, payload):
+        self.sent.append(payload)
+        err = self.fail.get(payload["chat_id"])
+        if err:
+            raise err
+
+    @property
+    def chat_ids(self):
+        return [p["chat_id"] for p in self.sent]
+
+
+def refusal(code, description):
+    return TelegramApiError(f"telegram refused ({code}) {description}",
+                            error_code=code, description=description)
+
+
+class TestTelegramFanOut(TelegramFanOutTestCase):
+    def test_absent_file_is_owner_only(self):
+        """The state every install starts in -- byte-identical to the old behaviour."""
+        post = FakePost()
+        self.make(post).send("L", [alert()])
+        self.assertEqual(post.chat_ids, [self.OWNER])
+
+    def test_owner_first_then_every_enabled_subscriber(self):
+        self.subs(("111", "rafa", True), ("222", "bruno", True))
+        post = FakePost()
+        self.make(post).send("L", [alert()])
+        self.assertEqual(post.chat_ids, [self.OWNER, "111", "222"])
+
+    def test_everyone_receives_the_identical_message(self):
+        self.subs(("111", "rafa", True))
+        post = FakePost()
+        self.make(post).send("L", [alert()])
+        self.assertEqual(len({p["text"] for p in post.sent}), 1)
+        self.assertEqual({p["parse_mode"] for p in post.sent}, {"HTML"})
+
+    def test_disabled_subscribers_are_skipped(self):
+        self.subs(("111", "rafa", True), ("222", "bruno", False))
+        post = FakePost()
+        self.make(post).send("L", [alert()])
+        self.assertEqual(post.chat_ids, [self.OWNER, "111"])
+
+    def test_the_owner_is_never_messaged_twice(self):
+        """A hand-edited file can list the owner. Two identical alerts is the mild cost;
+        the real one is that the copy would be best-effort, so a failure to reach YOU
+        could be reported as a warning instead of exit 3."""
+        self.subs((self.OWNER, "me again", True), ("111", "rafa", True))
+        post = FakePost()
+        self.make(post).send("L", [alert()])
+        self.assertEqual(post.chat_ids, [self.OWNER, "111"])
+
+    def test_no_alerts_sends_to_nobody(self):
+        self.subs(("111", "rafa", True))
+        post = FakePost()
+        self.make(post).send("L", [])
+        self.assertEqual(post.sent, [])
+
+
+class TestTelegramTiers(TelegramFanOutTestCase):
+    def test_owner_failure_raises_after_every_friend_was_still_attempted(self):
+        """A dead owner chat must not cost the friends their message -- the MultiNotifier
+        rule, one layer down."""
+        self.subs(("111", "rafa", True), ("222", "bruno", True))
+        post = FakePost(fail={self.OWNER: refusal(400, "Bad Request: chat not found")})
+        with self.assertRaises(NotifyError) as cm:
+            self.make(post).send("L", [alert()])
+        self.assertIn(self.OWNER, str(cm.exception))
+        self.assertEqual(post.chat_ids, [self.OWNER, "111", "222"])
+
+    def test_a_friends_failure_does_not_raise(self):
+        """Exit 3 means YOU were not told. A friend blocking the bot must not claim it."""
+        self.subs(("111", "rafa", True))
+        post = FakePost(fail={"111": refusal(403, "Forbidden: bot was blocked by the user")})
+        self.make(post).send("L", [alert()])                    # must not raise
+        self.assertIn(self.OWNER, post.chat_ids, "the owner was still delivered to")
+        self.assertTrue(any("rafa" in w for w in self.warnings), "and it was reported")
+
+    def test_a_403_disables_that_subscriber_in_the_file(self):
+        self.subs(("111", "rafa", True), ("222", "bruno", True))
+        post = FakePost(fail={"111": refusal(403, "Forbidden: bot was blocked by the user")})
+        self.make(post).send("L", [alert()])
+        by_id = {s.chat_id: s for s in self.store.load()}
+        self.assertFalse(by_id["111"].enabled)
+        self.assertIn("blocked", by_id["111"].disabled_reason)
+        self.assertTrue(by_id["222"].enabled, "the healthy subscriber was left alone")
+
+    def test_a_disabled_subscriber_is_not_retried_next_run(self):
+        """The point of persisting it: otherwise every run warns about them forever."""
+        self.subs(("111", "rafa", True))
+        blocked = refusal(403, "Forbidden: bot was blocked by the user")
+        self.make(FakePost(fail={"111": blocked})).send("L", [alert()])
+        post = FakePost()
+        self.make(post).send("L", [alert()])                    # a fresh run
+        self.assertEqual(post.chat_ids, [self.OWNER])
+
+    def test_chat_not_found_is_also_permanent(self):
+        self.subs(("111", "rafa", True))
+        post = FakePost(fail={"111": refusal(400, "Bad Request: chat not found")})
+        self.make(post).send("L", [alert()])
+        self.assertFalse(self.store.load()[0].enabled)
+
+    def test_a_400_parse_error_disables_NOBODY(self):
+        """⛔ The expensive mistake this guard exists for. "can't parse entities" is a 400
+        like "chat not found", but it is about the MESSAGE, so it fails for every
+        recipient at once: treating any 400 as permanent would wipe the whole subscriber
+        list in a single run, from one ticket name the formatter mishandled."""
+        self.subs(("111", "rafa", True), ("222", "bruno", True))
+        broken = refusal(400, "Bad Request: can't parse entities")
+        post = FakePost(fail={self.OWNER: broken, "111": broken, "222": broken})
+        with self.assertRaises(NotifyError):
+            self.make(post).send("L", [alert()])
+        self.assertTrue(all(s.enabled for s in self.store.load()),
+                        "a formatting bug disabled real subscribers")
+
+    def test_a_rate_limit_does_not_disable(self):
+        self.subs(("111", "rafa", True))
+        post = FakePost(fail={"111": refusal(429, "Too Many Requests: retry after 30")})
+        self.make(post).send("L", [alert()])
+        self.assertTrue(self.store.load()[0].enabled)
+        self.assertTrue(any("retry next run" in w for w in self.warnings))
+
+    def test_a_network_error_does_not_disable(self):
+        """It carries no error_code at all -- which is exactly how "the network" is told
+        apart from "this chat"."""
+        self.subs(("111", "rafa", True))
+        post = FakePost(fail={"111": urllib.error.URLError("connection reset")})
+        self.make(post).send("L", [alert()])
+        self.assertTrue(self.store.load()[0].enabled)
+
+    def test_a_store_write_failure_does_not_fail_the_delivery(self):
+        """Bookkeeping, not delivery. Everyone reachable was reached; failing to RECORD
+        that one person was not is not a reason to report the alert as undelivered."""
+        class ReadOnlyStore(Store):
+            def save(self, subs):
+                raise OSError("read-only file system")
+
+        store = ReadOnlyStore(self.path)
+        self.subs(("111", "rafa", True))
+        post = FakePost(fail={"111": refusal(403, "Forbidden: bot was blocked by the user")})
+        self.make(post, store=store).send("L", [alert()])       # must not raise
+        self.assertTrue(any("could not disable" in w for w in self.warnings))
+
+
+class TestTelegramStartupFailures(TelegramFanOutTestCase):
+    def test_a_comma_separated_chat_id_is_refused_and_says_where_friends_go(self):
+        """Left alone it is sent verbatim as one chat id, and Telegram answers 400 "chat
+        not found" on every run: a setup that looks configured and reaches nobody."""
+        with self.assertRaises(NotifyError) as cm:
+            self.make(FakePost(), chat_id="42,111")
+        self.assertIn("subscribers.json", str(cm.exception))
+
+    def test_a_corrupt_file_fails_at_construction_not_at_alert_time(self):
+        self.path.write_text("{broken", encoding="utf-8")
+        with self.assertRaises(SubscriberError):
+            self.make(FakePost())
+
+    def test_build_keeps_the_other_sinks_when_the_subscriber_file_is_corrupt(self):
+        """The trade-off, stated: a corrupt list costs the telegram sink for the whole
+        run -- yours included -- but never the run itself. Same degradation as a missing
+        powershell.exe."""
+        import os
+        from pricewatch import notify
+        self.path.write_text("{broken", encoding="utf-8")
+        warnings = []
+        with mock.patch.dict(os.environ, {"BOT_API_TOKEN": "TOK", "TELEGRAM_CHAT_ID": "42",
+                                          "PRICEWATCH_SUBSCRIBERS": str(self.path)}):
+            n = notify.build(["console", "telegram"], on_warning=warnings.append)
+        self.assertEqual([s.name for s in n.sinks], ["console"])
+        self.assertTrue(any("SubscriberError" in w for w in warnings))
+
+
+class TestPermanenceClassification(unittest.TestCase):
+    def test_403_is_permanent(self):
+        self.assertTrue(is_permanent_chat_failure(
+            refusal(403, "Forbidden: bot was blocked by the user")))
+
+    def test_400_chat_not_found_is_permanent(self):
+        self.assertTrue(is_permanent_chat_failure(refusal(400, "Bad Request: chat not found")))
+
+    def test_other_400s_are_not(self):
+        for desc in ("Bad Request: can't parse entities",
+                     "Bad Request: message text is empty",
+                     "Bad Request: message is too long"):
+            self.assertFalse(is_permanent_chat_failure(refusal(400, desc)), desc)
+
+    def test_transient_codes_are_not(self):
+        for code in (429, 500, 502, 401):
+            self.assertFalse(is_permanent_chat_failure(refusal(code, "x")), code)
+
+    def test_an_exception_with_no_code_is_not(self):
+        self.assertFalse(is_permanent_chat_failure(urllib.error.URLError("reset")))
+
+
+if __name__ == "__main__":
+    unittest.main()

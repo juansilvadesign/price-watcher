@@ -132,6 +132,15 @@ def main(argv=None) -> int:
         print(f"config error building notifier(s) {names}: {e}", file=sys.stderr)
         return 2
     print(f"notifiers: {', '.join(names)}")
+    # Fan-out is invisible otherwise, and the number that matters is how many people a
+    # real alert reaches. Printed on every run so cron.log carries it: a subscriber the
+    # notifier auto-disabled at 3am would otherwise leave no trace anywhere you look.
+    for sink in getattr(notifier, "sinks", []):
+        subs = getattr(sink, "subscribers", None)
+        if subs is None:
+            continue
+        who = f" — {', '.join(s.name for s in subs)}" if subs else ""
+        print(f"  {sink.name}: you + {len(subs)} subscriber(s){who}")
 
     if args.test_notify:
         probe = Reading(target_id="test", site="test", item="TEST || probe",
