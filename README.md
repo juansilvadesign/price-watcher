@@ -16,15 +16,21 @@ pricewatch/
   models.py              Reading / Alert / AdapterError, money as integer centavos
   registry.py            targets/*.json -> validated Target objects
   filters.py             target-side filtering (allow-list + deny-list)
-  rules.py               the four alert rules
+  rules.py               the six alert rules
   history.py             append-only JSONL, one file per target
-  notify.py              Notifier interface + console sink
+  notify.py              Notifier interface + console / telegram / toast sinks
+  subscribers.py         who receives Telegram alerts besides you
+  telegram_api.py        Bot API client; decodes Telegram's error envelope once
   adapters/
     base.py              the adapter contract
     buyticketbrasil.py   site #1
+tools/
+  telegram_chat_id.py    find YOUR chat id
+  telegram_subscribers.py  approve / list / disable friends
 targets/*.json           one file per thing being watched
 history/*.jsonl          append-only price record
-tests/                   114 tests, fully offline (real captured fixture)
+subscribers.json         approved recipients (gitignored, absent until you add one)
+tests/                   187 tests, fully offline (real captured fixture)
 ```
 
 **Zero dependencies.** Python 3.10+ standard library only — no venv needed, nothing
@@ -38,7 +44,7 @@ python3 watch.py --verbose             # print every listing, not just the cheap
 python3 watch.py --only rockinrio2026-09-04
 python3 watch.py --dry-run             # fetch + evaluate, write nothing
 python3 watch.py --list                # show the registry
-python3 -m unittest discover -s tests -t .   # 114 tests, no network
+python3 -m unittest discover -s tests -t .   # 187 tests, no network
 ```
 
 Exit codes: `0` clean · `1` at least one adapter failed · `2` configuration error ·
@@ -236,7 +242,7 @@ Three sinks ship. Combine them freely — `--notifier console telegram toast`, o
 | sink | reaches you when | needs |
 |---|---|---|
 | `console` | you are looking at the terminal | — |
-| `telegram` | anywhere, including your phone | `BOT_API_TOKEN` + `TELEGRAM_CHAT_ID` |
+| `telegram` | anywhere, including your phone — yours and your friends' | `BOT_API_TOKEN` + `TELEGRAM_CHAT_ID` (+ optional `subscribers.json`) |
 | `toast` | you are at the Windows desktop | WSL + `powershell.exe` (no module to install) |
 
 **Prove delivery before trusting it**, rather than discovering it is broken on the
@@ -246,6 +252,10 @@ one alert you cared about:
 python3 watch.py --test-notify                     # uses PRICEWATCH_NOTIFIERS
 python3 watch.py --test-notify --notifier toast    # or just one
 ```
+
+⚠️ **`--test-notify` fans out.** It sends to every subscriber, which is exactly right for
+testing the fan-out and wrong for checking one friend you just added — use
+`tools/telegram_subscribers.py --test <chat_id>` for that.
 
 Every sink is attempted even if an earlier one fails, so a Telegram outage does not
 cost you the toast. A delivery failure is never swallowed: it exits **3**, which is
@@ -265,6 +275,64 @@ cannot open a conversation, so the chat has to write to it first:
 The helper distinguishes the failure modes rather than printing an empty list: an
 invalid token, a webhook set on the bot (which makes `getUpdates` always empty), and
 "you have not messaged it yet" each say so.
+
+### Sharing the bot with friends
+
+The bot is **public** — anyone who finds it can message it — so being able to reach the
+bot is not the same as being on the list. You are the gate:
+
+```bash
+# 1. the friend opens your bot link and sends anything (/start is fine)
+python3 tools/telegram_subscribers.py --pending            # who is waiting
+python3 tools/telegram_subscribers.py --add 1122334455 --name rafa
+python3 tools/telegram_subscribers.py --test 1122334455    # prove it reaches them
+python3 tools/telegram_subscribers.py                      # the current list
+```
+
+They now receive **every alert for every target**, identical to yours, from the same run.
+There is no per-person target filtering — deliberately, so there is no second place a
+typo can silently mute somebody. Removing them is `--remove`; `--disable` keeps the entry
+and stops sending.
+
+**Two tiers, and they are not symmetric:**
+
+| | reached | a failure means |
+|---|---|---|
+| **you** (`TELEGRAM_CHAT_ID`) | first, every run | `NotifyError` → exit **3** |
+| **a subscriber** (`subscribers.json`) | after you, best-effort | a warning; the exit code does not move |
+
+That asymmetry is the whole feature. Exit 3 means *you were not told* — if a friend
+blocking the bot could produce it, every cron run would be red forever and the one code
+that is about **you** would stop meaning anything. Every recipient is still attempted
+before anything is raised, so your outage does not cost them their message either.
+
+**A permanent refusal disables that subscriber; a transient one does not.** Telegram
+answers 403 (`bot was blocked by the user`) or 400 `chat not found` for a chat that will
+still be gone next run, and the notifier writes `enabled: false` into `subscribers.json`
+with the reason rather than warning about them every minute forever. A 429, a 5xx or a
+dropped connection changes nothing and is retried. ⛔ The 400 branch is narrowed to
+*chat not found* on purpose: `can't parse entities` is also a 400, and it fails for
+**every** recipient at once — treating any 400 as permanent would let one ticket name the
+formatter mishandled wipe the entire list in a single run.
+
+**An absent file and a corrupt file are different things.** No file means nobody is
+subscribed — valid, silent, and where every install starts. A file that will not parse
+means we do not know *who* the recipients are, so it raises at startup, `build()` drops
+the whole Telegram sink with a loud warning, and the run continues on the other channels.
+The trade-off, stated: a corrupt list costs you your own Telegram for that run. Delete or
+fix the file and it is owner-only again.
+
+Each run prints the fan-out so `history/cron.log` carries it — a subscriber the notifier
+auto-disabled at 3am shows up as the count dropping:
+
+```
+notifiers: console, telegram, toast
+  telegram: you + 2 subscriber(s) — rafa, bruno
+```
+
+⛔ `subscribers.json` is **gitignored**: those are other people's chat ids. Same rule as
+`.env`, and the same consequence — it exists only on this machine, and losing it means
+asking everyone to message the bot again.
 
 ### Windows toast (from WSL)
 
@@ -306,6 +374,10 @@ keeps the directory alive in a fresh clone.
 and is committed. ⛔ The file is **parsed in Python, never sourced in a shell** —
 sourcing leaks every value into shell history and into every child process, and one
 malformed line executes arbitrary code. Real environment variables override `.env`.
+
+`subscribers.json` is gitignored for a different reason: it is not a secret, it is other
+people's **personal data**. Chat ids identify individuals, this repo may be published,
+and nobody on that list agreed to appear in a commit.
 
 ## Site #1 — buyticketbrasil
 

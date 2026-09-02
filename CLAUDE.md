@@ -51,6 +51,22 @@ shared belongs in the harness. If you find yourself putting a site name in
   turns "you were not alerted" into "there was nothing to alert about".
 - **A sink that cannot be constructed fails at startup, not at alert time.** A missing
   `TELEGRAM_CHAT_ID` must not be discovered on the one message that mattered.
+- **The owner chat is critical; a subscriber is best-effort.** `TELEGRAM_CHAT_ID` names
+  exactly one chat — yours — and failing to reach it raises and exits **3**. A friend in
+  `subscribers.json` failing warns and leaves the exit code alone. Exit 3 has to keep
+  meaning *you* were not told; if a friend blocking the bot could produce it, every cron
+  run would be red forever and the code would stop meaning anything. Every recipient is
+  still attempted before anything is raised — the `MultiNotifier` rule, one layer down.
+- **An absent `subscribers.json` is data; an unparseable one is blindness.** Absent means
+  nobody is subscribed (valid, silent, where every install starts). Corrupt means we do
+  not know *who* the recipients are, so it raises at startup. Collapsing the two is
+  `AdapterError` vs `[]` wearing a different hat: a typo'd file would read as "no friends
+  subscribed" until somebody noticed they had stopped receiving alerts — which is never,
+  because that is precisely what it looks like.
+- **Only a refusal about the CHAT may disable a subscriber** — 403, or 400 *chat not
+  found*. A 400 that is about the **message** (`can't parse entities`) fails for every
+  recipient at once, so treating any 400 as permanent would let one ticket name the
+  formatter mishandled wipe the whole list in a single run.
 - ⛔ **`.env` is parsed, never sourced**, and never committed. Anything interpolated
   into a shell, a PowerShell script, or markup gets escaped at the boundary — ticket
   names are third-party text (an apostrophe in one would otherwise break the toast).

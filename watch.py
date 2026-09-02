@@ -131,7 +131,13 @@ def main(argv=None) -> int:
         # the one message you cared about is the one that was lost.
         print(f"config error building notifier(s) {names}: {e}", file=sys.stderr)
         return 2
-    print(f"notifiers: {', '.join(names)}")
+    # Reports what SURVIVED build(), not what was requested. A corrupt subscribers.json
+    # or an absent powershell.exe drops a sink with a warning, and a header still
+    # claiming that sink would be a status line contradicting the run underneath it.
+    built = [s.name for s in getattr(notifier, "sinks", [])]
+    dropped = [n for n in names if n not in built]
+    print(f"notifiers: {', '.join(built) or '(none)'}"
+          + (f"  [dropped: {', '.join(dropped)}]" if dropped else ""))
     # Fan-out is invisible otherwise, and the number that matters is how many people a
     # real alert reaches. Printed on every run so cron.log carries it: a subscriber the
     # notifier auto-disabled at 3am would otherwise leave no trace anywhere you look.

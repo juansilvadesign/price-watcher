@@ -1,6 +1,6 @@
 # price-watcher — Tasks
 
-**State: v1.6, 2026-09-01.** 114 tests green offline. **All seven Rock in Rio nights**
+**State: v1.8, 2026-09-02.** 187 tests green offline. **All seven Rock in Rio nights**
 are live targets, read end to end; alerts fired and verified edge-triggered. Console,
 Windows toast and Telegram delivery are all **confirmed with a real message**. Cron
 runs two cadences: one minute for the three nights he would buy, five for the four
@@ -215,6 +215,76 @@ he is only tracking.
       is True, so it would have converted to R$ 1,00 — a floor that reads as armed and
       matches nothing. Caught before conversion; afterwards it is an ordinary `100` and
       no later validator can see it. Same trap `_validate_window_hours` already guards.
+
+## Done — v1.8 (2026-09-02) — sharing the bot with friends
+
+Juan's ask: the bot is public but only ever messaged him; he wants the friends **he
+selects** to receive the same alerts. Shape decided by interview (2026-09-02): friends
+message the bot, **he approves**; everyone gets everything; a friend's failure is
+best-effort; the list lives in a gitignored `subscribers.json`.
+
+- [x] **`pricewatch/subscribers.py`** — the recipient list, validated the way
+      `registry.py` validates targets: refuses rather than defaults. Missing `chat_id`,
+      a bare `true` as a chat id, a quoted `"false"` for `enabled`, a duplicate id, or a
+      wrong root shape each refuse to load.
+- [x] ⭐ **An absent file and a corrupt file are different states.** Absent = nobody
+      subscribed, valid and silent, byte-identical to the old owner-only behaviour.
+      Unparseable = we do not know *who* the recipients are → raises. Same pair as
+      `AdapterError` vs `[]`; collapsing them would make a typo'd file look like "no
+      friends subscribed" forever, because not receiving alerts is exactly what that
+      looks like from outside.
+- [x] **Two-tier fan-out in `TelegramNotifier`.** Owner first (critical → `NotifyError`
+      → exit **3**), then every enabled subscriber (best-effort → warning, exit code
+      untouched). **Every recipient is attempted before anything raises** — the
+      `MultiNotifier` rule one layer down, so a dead owner chat does not cost the
+      friends their message and vice versa.
+- [x] 🔴 **Auto-disable on a permanent refusal only.** A 403 (`bot was blocked by the
+      user`) or a 400 `chat not found` writes `enabled: false` + the reason into the
+      file, so a friend who blocks the bot stops costing a warning every minute.
+      ⛔ **The 400 branch is narrowed to "chat not found" deliberately:**
+      `can't parse entities` is also a 400 and fails for **every** recipient at once —
+      treating any 400 as permanent would wipe the entire list in one run from a single
+      ticket name the formatter mishandled. Pinned by a test that says so by name.
+- [x] **`set_enabled` re-reads before writing.** Two crontab lines fire in the same
+      minute, so two runs hold the file at once; writing back a startup snapshot would
+      revert the other run's disable. Not atomic against a true race — the window is
+      narrowed to read→`os.replace`, and untouched entries survive.
+- [x] **`pricewatch/telegram_api.py`** — one place that decodes Telegram's error
+      envelope. The refusal that matters lives in the **body of the 4xx**, which
+      `urllib` raises past; without decoding it, "this person blocked the bot" and "the
+      network hiccuped" are the same event. `tools/telegram_chat_id.py` now shares it.
+- [x] **`tools/telegram_subscribers.py`** — `--pending` (who messaged the bot and is not
+      on the list) · `--add/--remove/--enable/--disable` · `--test <id>` (one synthetic
+      alert to one chat, because `watch.py --test-notify` fans out to everybody) ·
+      default `--list`. Refuses to add your own `TELEGRAM_CHAT_ID`, and names the
+      getUpdates traps (webhook set, recent-only queue) instead of printing an empty list.
+- [x] **A comma-separated `TELEGRAM_CHAT_ID` is refused at startup**, pointing at the
+      subscriber tool. Left alone it is sent verbatim as one chat id and Telegram answers
+      400 `chat not found` every run: a setup that looks configured and reaches nobody.
+- [x] **Every run prints the fan-out** (`telegram: you + 2 subscriber(s) — rafa, bruno`)
+      so `cron.log` carries it; a subscriber auto-disabled at 3am shows as the count
+      dropping. The `notifiers:` header now reports the sinks that **survived** `build()`
+      rather than the ones requested — a corrupt list drops the sink, and a header still
+      claiming it would contradict the run underneath it.
+- [x] ⛔ **`subscribers.json` gitignored** (verified by exit code, not by output). Not a
+      secret — other people's personal data, in a repo that may be published.
+- [x] **114 → 187 tests**, all offline. **Mutation-proven, 4 reverts:** any-400-is-
+      permanent (2 legs fail, incl. *"a formatting bug disabled real subscribers"*) ·
+      a friend's failure re-raises (2) · corrupt file reads as `[]` (4) · `set_enabled`
+      writes a stale snapshot (1). Sources restored byte-identical, sha256 verified.
+- [x] **Fixed an ambient-state trap in the existing suite**: `TestTelegram` built a
+      notifier with the default store, so those assertions would have started reading
+      the real `subscribers.json` and failing the day a friend was added — the same
+      shape as the `.env` trap already noted in `test_missing_chat_id_fails_at_construction`.
+- [x] ✅✅ **PROVEN LIVE 2026-09-02** — Juan added his own **second Telegram account** as
+      the first subscriber and the fan-out delivered. Not a probe: a real second chat on
+      the real notifier path.
+- [ ] ⚠️ **The failure half is still unobserved.** No subscriber has ever been
+      auto-disabled in production, so the 403 → `enabled: false` write is proven by test
+      and by mutation, never by a live block. Expected, not observed.
+- [ ] 🟡 **Commit the 7 dirty doc/config files.** The code landed as `ec584ac`; the docs
+      did not. ⛔ **`.gitignore` is the urgent one** — it carries the `subscribers.json`
+      rule, and a real subscriber file now exists on disk.
 
 ## Next — in priority order
 - [x] ✅ **Alert volume: MEASURED, not guessed — and it is not the problem.** Over the

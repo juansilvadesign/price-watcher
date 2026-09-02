@@ -15,3 +15,10 @@ history/*.log
 .env
 .env.*
 !.env.example
+
+# The subscriber list carries OTHER PEOPLE's chat ids -- personal data, and this repo
+# may be published. Same rule as .env: the keys are documented, the file is not committed.
+# ⚠️ Consequence, stated plainly: it exists only on this machine. Losing it means asking
+# every friend to message the bot again so you can re-approve them.
+subscribers.json
+subscribers.json.tmp
