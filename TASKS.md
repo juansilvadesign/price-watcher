@@ -1,9 +1,9 @@
 # price-watcher — Tasks
 
-**State: v1.9, 2026-09-02.** 228 tests green offline. Alerts are written **per
-recipient language** (`en-US` / `pt-BR`); yours, console and toast stay English.
-⏳ The pt-BR path is offline-proven only — `--test <chat_id>` against a real friend
-is the outstanding leg. **All seven Rock in Rio nights**
+**State: v1.9, 2026-09-02 — committed `ba5a99f`.** 228 tests green offline. Alerts are
+written **per recipient language** (`en-US` / `pt-BR`); yours, console and toast stay
+English. ✅✅ **Confirmed live against a real chat** — unlike v1.8's failure half, this
+feature is proven in production and not by test alone. **All seven Rock in Rio nights**
 are live targets, read end to end; alerts fired and verified edge-triggered. Console,
 Windows toast and Telegram delivery are all **confirmed with a real message**. Cron
 runs two cadences: one minute for the three nights he would buy, five for the four
@@ -348,8 +348,10 @@ best-effort; the list lives in a gitignored `subscribers.json`.
       rules on the real `rockinrio2026-09-04` target: owner got `NEW LOWEST — R$ 250,00`,
       the pt-BR friends got `NOVA MÍNIMA — R$ 250,00`, identical money, identical label,
       third-party ticket name escaped in both.
-- [ ] ⏳ **Not yet proven against live Telegram.** `--test <chat_id>` against a real
-      pt-BR friend is the outstanding leg; every check above is offline.
+- [x] ✅✅ **PROVEN AGAINST LIVE TELEGRAM 2026-09-02** (Juan, real chat). Everything
+      above was offline; this closes the one leg that could not be. ⛔ Note what is
+      still *not* covered: a **wrong** language is only catchable at `--test` time —
+      every alert Juan personally receives afterwards is English regardless.
 
 ## Next — in priority order
 - [x] ✅ **Alert volume: MEASURED, not guessed — and it is not the problem.** Over the
