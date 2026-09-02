@@ -77,10 +77,6 @@ class TestFailureModes(unittest.TestCase):
         self.assertTrue(url.startswith("https://buyticketbrasil.com/evento/rockinrio2026?"))
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class TestShippedTargetUrls(unittest.TestCase):
     """Every alert links to ONE date's page, never the generic event page.
 
@@ -94,8 +90,16 @@ class TestShippedTargetUrls(unittest.TestCase):
             "?data=1788570000000&evento_local=1765323377313x720803947984191500&cidade=Rio+de+Janeiro",
         "rockinrio2026-09-05": "https://buyticketbrasil.com/evento/rockinrio2026"
             "?data=1788656400000&evento_local=1765323572984x293448430956314600&cidade=Rio+de+Janeiro",
+        "rockinrio2026-09-06": "https://buyticketbrasil.com/evento/rockinrio2026"
+            "?data=1788742800000&evento_local=1765323621728x687317125269815300&cidade=Rio+de+Janeiro",
+        "rockinrio2026-09-07": "https://buyticketbrasil.com/evento/rockinrio2026"
+            "?data=1788829200000&evento_local=1765323705621x670780912989372400&cidade=Rio+de+Janeiro",
         "rockinrio2026-09-11": "https://buyticketbrasil.com/evento/rockinrio2026"
             "?data=1789174800000&evento_local=1765323734393x441784445622288400&cidade=Rio+de+Janeiro",
+        "rockinrio2026-09-12": "https://buyticketbrasil.com/evento/rockinrio2026"
+            "?data=1789261200000&evento_local=1765323797528x513509114247905300&cidade=Rio+de+Janeiro",
+        "rockinrio2026-09-13": "https://buyticketbrasil.com/evento/rockinrio2026"
+            "?data=1789347600000&evento_local=1765323829346x381107157350744060&cidade=Rio+de+Janeiro",
     }
 
     def test_each_target_builds_its_own_day_url(self):
@@ -106,5 +110,12 @@ class TestShippedTargetUrls(unittest.TestCase):
                  for t in load_targets(Path(__file__).resolve().parent.parent / "targets")}
         self.assertEqual(built, self.EXPECTED)
 
-    def test_the_three_urls_are_distinct(self):
-        self.assertEqual(len(set(self.EXPECTED.values())), 3)
+    def test_every_url_is_distinct(self):
+        """Seven nights, seven pages. A copy-paste slip that reused one date's
+        `evento_local` would still build a valid URL and alert on the wrong night."""
+        self.assertEqual(len(set(self.EXPECTED.values())), len(self.EXPECTED))
+        self.assertEqual(len(self.EXPECTED), 7)
+
+
+if __name__ == "__main__":
+    unittest.main()

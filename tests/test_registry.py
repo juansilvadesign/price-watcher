@@ -82,12 +82,16 @@ class TestRegistry(unittest.TestCase):
 
 
 class TestRealTargets(unittest.TestCase):
-    """The three shipped targets must actually load."""
+    """All seven shipped targets must actually load.
+
+    The count is pinned: a target file that fails to parse would otherwise just
+    vanish from the registry, and a night silently stops being watched.
+    """
 
     def test_shipped_targets_are_valid(self):
         root = Path(__file__).resolve().parent.parent / "targets"
         targets = load_targets(root)
-        self.assertEqual(len(targets), 3)
+        self.assertEqual(len(targets), 7)
         for t in targets:
             self.assertEqual(t.adapter, "buyticketbrasil")
             self.assertEqual(t.filters["extra"]["sector"], ["Gramado"])
