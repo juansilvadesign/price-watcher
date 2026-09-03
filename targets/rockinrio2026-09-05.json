@@ -47,11 +47,10 @@
     }
   },
   "_note_critical_price": "critical_price is the anomaly floor, and it does TWO jobs from one number. (1) Any price under it alerts immediately -- on entering the band and on each new low inside it -- bypassing the 6h window entirely. (2) Nothing under it ever becomes a baseline for lowest_ever or lowest_in_window, so a mispricing cannot ratchet them shut. This is not hypothetical: on 2026-09-02T13:46Z a single R$ 66,00 Gramado || Inteira, present for one run and gone the next minute, took the lowest_ever record on 04/09 -- which has no expiry, so the rule was permanently dead on the night it was built for. X is set just under this night's observed floor (R$ 242,00), because a price that far below trading range is far more likely to be a listing error than a deal. The exclusion is applied on READ, so arming this heals a history that is already poisoned.",
-  "_note_buy": "Read ONLY by the sibling tool knowledge/projects/ticket-autobuy. price-watcher itself never reads this key and never buys -- the boundary in its CLAUDE.md is unchanged. Authored 2026-09-02 for the FIRST REAL PURCHASE, on Juan's explicit instruction, to verify the one unmapped leg (_extract_pix). max_price_brl 310.00 is IN the money on purpose: 05/09 Gramado traded from ~302,50 that night, so this ceiling is chosen to fire, unlike 04/09's deliberately-out-of-the-money 220.00. entry_class stays unfiltered per the filters note, so the cheapest Gramado row wins. min_price_brl 200.00 mirrors critical_price: without it an armed buy takes ANY row under the ceiling, including a mispriced one -- and a R$ 66,00 Gramado||Inteira really did appear on this event on 2026-09-02. The floor refuses the glitch without touching the intended R$ 220,00 purchase. ⛔ DISARMED again after the 2026-09-02 verification runs. The ceiling is IN the money, so an armed target means any `buy` invocation spends ~R$275 -- arm it deliberately, immediately before a run, never leave it armed at rest.",
+  "_note_buy": "Read ONLY by the sibling tool knowledge/projects/ticket-autobuy; price-watcher never reads this key and never buys. AUTO-BUY armed 2026-09-02 on Juan's call: all 7 nights, ceiling R$200,00, ONE reservation per night ever. ⛔ min_price_brl is deliberately ABSENT -- Juan chose to buy a suspiciously cheap row rather than refuse it (an unpaid hold on a mispricing costs nothing, and refusing it misses the one dip the tool exists for). That is the opposite of price-watcher's critical_price, which still excludes sub-R$200 rows from BASELINES -- two different jobs for the same number, do not collapse them. ⏰ The runner only fires 10:00-04:00 BRT and disarms this block the moment it buys, so `enabled: true` here means 'armed', never 'will buy repeatedly'.",
   "buy": {
-    "enabled": false,
-    "max_price_brl": 310.0,
-    "min_price_brl": 200.0,
+    "enabled": true,
+    "max_price_brl": 200.0,
     "quantity": 1,
     "sector": [
       "Gramado"

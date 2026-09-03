@@ -47,10 +47,10 @@
     }
   },
   "_note_critical_price": "critical_price is the anomaly floor, and it does TWO jobs from one number. (1) Any price under it alerts immediately -- on entering the band and on each new low inside it -- bypassing the 6h window entirely. (2) Nothing under it ever becomes a baseline for lowest_ever or lowest_in_window, so a mispricing cannot ratchet them shut. This is not hypothetical: on 2026-09-02T13:46Z a single R$ 66,00 Gramado || Inteira, present for one run and gone the next minute, took the lowest_ever record on 04/09 -- which has no expiry, so the rule was permanently dead on the night it was built for. X is set just under this night's observed floor (R$ 220,00), because a price that far below trading range is far more likely to be a listing error than a deal. The exclusion is applied on READ, so arming this heals a history that is already poisoned.",
-  "_note_buy": "Read ONLY by the sibling tool knowledge/projects/ticket-autobuy. price-watcher itself never reads this key and never buys -- the boundary in its CLAUDE.md is unchanged. max_price_brl 220.00 is the ceiling Juan set 2026-09-02; that day Gramado traded 308.00-550.00, so this is deliberately far out of the money. enabled stays FALSE until the post-login checkout is mapped and dry-run once.",
+  "_note_buy": "Read ONLY by the sibling tool knowledge/projects/ticket-autobuy; price-watcher never reads this key and never buys. AUTO-BUY armed 2026-09-02 on Juan's call: all 7 nights, ceiling R$200,00, ONE reservation per night ever. ⛔ min_price_brl is deliberately ABSENT -- Juan chose to buy a suspiciously cheap row rather than refuse it (an unpaid hold on a mispricing costs nothing, and refusing it misses the one dip the tool exists for). That is the opposite of price-watcher's critical_price, which still excludes sub-R$200 rows from BASELINES -- two different jobs for the same number, do not collapse them. ⏰ The runner only fires 10:00-04:00 BRT and disarms this block the moment it buys, so `enabled: true` here means 'armed', never 'will buy repeatedly'.",
   "buy": {
-    "enabled": false,
-    "max_price_brl": 220.0,
+    "enabled": true,
+    "max_price_brl": 200.0,
     "quantity": 1,
     "sector": [
       "Gramado"
