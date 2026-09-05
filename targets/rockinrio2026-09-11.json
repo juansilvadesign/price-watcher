@@ -55,6 +55,7 @@
     "sector": [
       "Gramado"
     ],
-    "entry_class": null
+    "entry_class": null,
+    "min_available": 20
   }
 }
