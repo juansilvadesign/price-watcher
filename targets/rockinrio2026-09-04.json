@@ -2,7 +2,7 @@
   "id": "rockinrio2026-09-04",
   "label": "Rock in Rio 2026 — 04/09 (sex) · Gramado",
   "adapter": "buyticketbrasil",
-  "enabled": true,
+  "enabled": false,
   "params": {
     "event_slug": "rockinrio2026",
     "data_millis": 1788570000000,
