@@ -1,0 +1,55 @@
+{
+  "_README": "TEMPLATE — copy to ../<id>.json and fill every <FILL:...>. Read ../../NEW_TARGET.md first; it is an interview, not a form. ⛔ This file lives in targets/_template/ ON PURPOSE: load_targets() globs targets/*.json non-recursively and validates EVERY match BEFORE the --only filter, so an unfilled placeholder sitting in targets/ aborts the whole run, armed nights included. Do not move it up one directory.",
+  "_EXAMPLE": "The params AND the sector below are REAL and VERIFIED against the live payload 2026-09-06 — System of a Down + Faith No More, Maracanã, 15/01/2027. The prices and entry_class are NOT: they are the questions NEW_TARGET.md asks. Overwrite everything marked <FILL:...>.",
+  "id": "<FILL: must equal this file's name without .json>",
+  "label": "<FILL: what an alert shows you. ⛔ No status words ('sold out') and no show date — both go stale silently. Put dated facts in a _note_* key.>",
+  "adapter": "buyticketbrasil",
+  "enabled": true,
+  "_note_params": "Q1 — WHICH SITE? These four come straight out of a buyticketbrasil URL: /evento/SLUG?data=MILLIS&evento_local=LOCAL&cidade=CIDADE. Any other site needs a NEW ADAPTER, which is the roadmap's v2 item, not a config change. ⚠️ Always resolve data_millis yourself before writing a date anywhere: this event's is 1800068399000 -> 2027-01-15 23:59:59 BRT, an end-of-day SENTINEL, while Rock in Rio's land on a round 22:00:00 showtime. The BRT date was later confirmed correct (15/01/2027, Juan) but the 23:59:59 was never a showtime and is not evidence of one — read the date off the page, and note the slug says 2026 for a 2027 event, so the slug is not a date either.",
+  "params": {
+    "event_slug": "systemofadownefaithnomore2026",
+    "data_millis": 1800068399000,
+    "evento_local": "1787146746767x563326921850224640",
+    "cidade": "Rio de Janeiro"
+  },
+  "_note_filters": "Q3 — WHICH TICKET TYPE? and Q4 — DOES THE VENUE CHECK IT? The sector above is a REAL verified string: the whole of 'Pista Premium Itaú Personalité' is the SECTOR and does not split across sector/entry_class — the adapter splits the payload key on '||', so confirm which side a string lands on before filtering. ⛔ Never guess: a sector that matches nothing returns [], which reads as 'nothing on sale matching this target's filters' — byte-identical to a market that never dipped. Read it off a live payload with `python3 watch.py --only <id> --verbose --dry-run`. entry_class: null means ANY class and is correct ONLY where the gate does not verify the type. ⚠️ HOW MUCH that choice is worth varies enormously per event: on Rock in Rio the discounted classes WERE the entire sub-R$200 market, so filtering to Inteira made the price ladder unreachable; in this event's sector Meia Estudante undercuts Inteira by only 9% (R$1.197,90 vs R$1.320,00), so the same choice barely moves anything. Measure it, do not assume it.",
+  "filters": {
+    "min_quantity": 1,
+    "extra": {
+      "sector": [
+        "Pista Premium Itaú Personalité"
+      ],
+      "entry_class": "<FILL: null if the gate does not verify the type; otherwise the list you can actually present>"
+    }
+  },
+  "_note_rules": "Q2 — WHAT IS THE PRICE RANGE? lowest_ever ratchets shut: every record raises its own bar, so it is quietest on the day you actually buy. lowest_in_window has an expiring baseline, so it still flags today's dip; 6h spans a buying session without carrying yesterday into it. ⛔ below_threshold is edge-triggered — arming it at a ceiling already above the current floor is DORMANT ON ARRIVAL. Leave it disabled until you have a real reason.",
+  "rules": {
+    "critical_price": {
+      "enabled": true,
+      "price_brl": "<FILL: number, e.g. 400.0>"
+    },
+    "lowest_ever": {
+      "enabled": true
+    },
+    "lowest_in_window": {
+      "enabled": true,
+      "window_hours": 6
+    },
+    "below_threshold": {
+      "enabled": false,
+      "price_brl": 999.0
+    },
+    "drop_pct": {
+      "enabled": false,
+      "pct": 5.0
+    },
+    "price_changed": {
+      "enabled": false,
+      "direction": "any",
+      "min_delta_brl": 0.01
+    }
+  },
+  "_note_critical_price": "ONE number, TWO jobs — do not collapse them. (1) Anything under it alerts immediately, on entering the band and on each new low inside it, bypassing the 6h window. (2) Nothing under it may ever become a BASELINE for lowest_ever or lowest_in_window. Job (2) is the one that bites: on 2026-09-02 a single R$66,00 row, present for one run and gone the next minute, took the lowest_ever record on the 04/09 night — which has no expiry, so the rule was permanently dead on the night it was built for. Set it JUST UNDER the observed trading floor. The exclusion applies on READ, so arming it heals a history that is already poisoned. ⚠️ On buyticketbrasil preco_min is the FEE-INCLUSIVE Valor total: R$400 means R$400 out of pocket, not R$400 + 10% taxa. 🔴 WHEN THE TWO JOBS DISAGREE, SPLIT THEM. They only coexist in one number while the acting price sits near the trading floor — true on Rock in Rio (R$200 acting, floor just under the observed R$214,50), FALSE for this event, where a R$400 acting price sits ~3x below a R$1.197,90 floor. A critical_price of 400 there is a fine alert trigger and a uselessly loose anomaly floor: a mispriced R$500 row sails under it and takes lowest_ever permanently. Put the floor just under the trading range and carry the acting price on below_threshold instead.",
+  "_note_buy": "⛔ OPTIONAL and read ONLY by the sibling tool ../../../ticket-autobuy — price-watcher never reads this key and never buys. Delete the whole block for a watch-only target. To arm it, follow ../../../ticket-autobuy/NEW_EVENT.md; do not fill it in from here.",
+  "_note_LAST_STEP": "🔴 A NEW FILE IS NOT ENOUGH. Both cron lines name their targets with --only, so a target in neither list is NEVER POLLED while `--list` still shows it [on ]. Add the id to a crontab line — `* * * * *` for something you would buy, `*/5 * * * *` for something you are only tracking — and verify the edited line under `env -i` before trusting it."
+}

@@ -82,24 +82,46 @@ class TestRegistry(unittest.TestCase):
 
 
 class TestRealTargets(unittest.TestCase):
-    """All seven shipped targets must actually load.
+    """All eight shipped targets must actually load.
 
     The count is pinned: a target file that fails to parse would otherwise just
     vanish from the registry, and a night silently stops being watched.
+
+    Sector and entry_class are pinned PER TARGET rather than as one blanket value,
+    because they now genuinely differ and the difference is load-bearing. Rock in Rio
+    does not check the ticket type at the gate, so `entry_class` is null and the
+    cheapest class wins; Maracanã DOES, so SOAD names the two classes Juan can actually
+    present. A blanket assertion would have to be loosened to accommodate both, and a
+    loosened one would no longer notice `null` appearing on the target where being
+    turned away at the gate is the cost.
     """
+
+    #: id -> (sector, entry_class). Verbatim; every shipped target must appear.
+    EXPECTED_FILTERS = {
+        **{f"rockinrio2026-09-{d}": (["Gramado"], None)
+           for d in ("04", "05", "06", "07", "11", "12", "13")},
+        "soad2027-01-15": (["Pista Premium Itaú Personalité"], ["Meia Estudante", "Inteira"]),
+    }
 
     def test_shipped_targets_are_valid(self):
         root = Path(__file__).resolve().parent.parent / "targets"
         targets = load_targets(root)
-        self.assertEqual(len(targets), 7)
+        self.assertEqual(len(targets), 8)
         for t in targets:
             self.assertEqual(t.adapter, "buyticketbrasil")
-            self.assertEqual(t.filters["extra"]["sector"], ["Gramado"])
+            self.assertIn(t.id, self.EXPECTED_FILTERS, f"{t.id} is not pinned here")
+            sector, entry_class = self.EXPECTED_FILTERS[t.id]
+            self.assertEqual(t.filters["extra"]["sector"], sector, f"{t.id} sector")
+            self.assertEqual(t.filters["extra"]["entry_class"], entry_class,
+                             f"{t.id} entry_class -- the gate-verification call")
             # WHICH rules are armed is pinned in test_rules.TestSuccessiveNewLows;
             # here we only assert every rule is structurally valid and loadable.
             self.assertTrue(set(t.rules), f"{t.id} declares no rules")
             self.assertTrue(t.rules["below_threshold"]["price_cents"] > 0,
                             "a disabled rule must keep its parameter for re-arming")
+        # Without this the pin goes vacuous the moment a target is renamed.
+        self.assertEqual(set(self.EXPECTED_FILTERS) - {t.id for t in targets}, set(),
+                         "a pinned target is missing from targets/")
 
 
 class TestWindowRuleValidation(unittest.TestCase):

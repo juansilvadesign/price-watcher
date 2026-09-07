@@ -181,30 +181,52 @@ class TestSuccessiveNewLows(RuleCase):
         self.seed((23000,), (40000,))
         self.assertEqual(rules.evaluate(t, [reading(37000)], self.history), [])
 
+    #: id -> the rules that must be armed. Verbatim per target, not a rule with
+    #: exceptions: the SOAD entry is a deliberate THIRD shape and a branch that tried
+    #: to express all three would stop being readable as intent.
+    EXPECTED_ARMED = {
+        # Rock in Rio buy nights.
+        **{f"rockinrio2026-09-{d}": ["critical_price", "lowest_ever", "lowest_in_window"]
+           for d in ("04", "05", "11")},
+        # Rock in Rio tracking nights.
+        **{f"rockinrio2026-09-{d}": ["critical_price", "lowest_ever"]
+           for d in ("06", "07", "12", "13")},
+        # SOAD: critical_price ALONE. Juan goes only if a ticket can be had under
+        # R$400, so "this is a new low" at R$1.100,00 is noise on the way to a number
+        # that has not been reached.
+        "soad2027-01-15": ["critical_price"],
+    }
+
     def test_the_shipped_targets_arm_exactly_the_intended_rules(self):
-        """Pinned per night rather than as a blanket rule.
+        """Pinned per target rather than as a blanket rule.
 
-        `lowest_in_window` is armed ONLY on the three nights Juan would actually buy;
-        on a tracking night it would only add alerts he cannot act on. Everything else
-        stays off — that was an explicit call, not an oversight.
+        `lowest_in_window` is armed ONLY on the nights Juan would actually buy; on a
+        tracking night it would only add alerts he cannot act on. Everything else stays
+        off — that was an explicit call, not an oversight.
 
-        `critical_price` is the exception to the buy-night split: it is armed on ALL
-        seven. It is a data-quality guard as much as an alert, and a tracking night
-        runs `lowest_ever`, which one mispriced row kills permanently.
+        `critical_price` is armed on ALL of them, but for two DIFFERENT reasons, and
+        the difference is why this is a map and not a branch:
+
+          * On the Rock in Rio nights it is a data-quality guard as much as an alert —
+            those nights run `lowest_ever`, which one mispriced row kills permanently.
+          * On SOAD it is the ONLY armed rule, so it is purely an alert. Its anomaly
+            floor has no baseline left to protect, which is precisely what makes a
+            R$ 400,00 floor coherent ~3x under a R$ 1.197,90 market. ⛔ If `lowest_ever`
+            is ever re-armed there, that number has to be revisited the same day — this
+            test failing is the intended way to find that out.
         """
         from pathlib import Path
         from pricewatch.registry import load_targets
-        BUY = {"rockinrio2026-09-04", "rockinrio2026-09-05", "rockinrio2026-09-11"}
         seen = set()
         for t in load_targets(Path(__file__).resolve().parent.parent / "targets"):
             armed = sorted(n for n, c in t.rules.items() if c.get("enabled"))
-            expected = (["critical_price", "lowest_ever", "lowest_in_window"] if t.id in BUY
-                        else ["critical_price", "lowest_ever"])
-            self.assertEqual(armed, expected, f"{t.id} has {armed} armed")
+            self.assertIn(t.id, self.EXPECTED_ARMED, f"{t.id} is not pinned here")
+            self.assertEqual(armed, self.EXPECTED_ARMED[t.id], f"{t.id} has {armed} armed")
             seen.add(t.id)
-        # Without this the buy-night branch goes vacuous the moment an id is renamed,
-        # and the pin would keep passing while guarding nothing.
-        self.assertEqual(BUY - seen, set(), "a buy night is missing from targets/")
+        # Without this the map goes vacuous the moment an id is renamed, and the pin
+        # would keep passing while guarding nothing.
+        self.assertEqual(set(self.EXPECTED_ARMED) - seen, set(),
+                         "a pinned target is missing from targets/")
 
 
 class TestChangeOnlyRecording(RuleCase):

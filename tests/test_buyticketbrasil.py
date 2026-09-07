@@ -100,6 +100,12 @@ class TestShippedTargetUrls(unittest.TestCase):
             "?data=1789261200000&evento_local=1765323797528x513509114247905300&cidade=Rio+de+Janeiro",
         "rockinrio2026-09-13": "https://buyticketbrasil.com/evento/rockinrio2026"
             "?data=1789347600000&evento_local=1765323829346x381107157350744060&cidade=Rio+de+Janeiro",
+        # A different EVENT, not another night of the same one -- the slug changes too.
+        # Pinned for the same reason as the nights: a wrong data/evento_local pair does
+        # not error, the site falls back to the generic listing, and the alert still
+        # looks fine while linking to the wrong page.
+        "soad2027-01-15": "https://buyticketbrasil.com/evento/systemofadownefaithnomore2026"
+            "?data=1800068399000&evento_local=1787146746767x563326921850224640&cidade=Rio+de+Janeiro",
     }
 
     def test_each_target_builds_its_own_day_url(self):
@@ -111,10 +117,10 @@ class TestShippedTargetUrls(unittest.TestCase):
         self.assertEqual(built, self.EXPECTED)
 
     def test_every_url_is_distinct(self):
-        """Seven nights, seven pages. A copy-paste slip that reused one date's
+        """Eight targets, eight pages. A copy-paste slip that reused one date's
         `evento_local` would still build a valid URL and alert on the wrong night."""
         self.assertEqual(len(set(self.EXPECTED.values())), len(self.EXPECTED))
-        self.assertEqual(len(self.EXPECTED), 7)
+        self.assertEqual(len(self.EXPECTED), 8)
 
 
 if __name__ == "__main__":
