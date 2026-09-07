@@ -51,13 +51,23 @@ written. ⭐ Same adapter, so this does **not** discharge the v2 item below.
   an empty log is *correct* — and indistinguishable from a target no cron line polls.
   ⛔ Liveness comes from `history/cron.log` being touched, never from alerts.
 
-### Still open
-- [ ] 🔴 **SOAD is NOT on a cron line, so it is not being polled.** There is currently
-      exactly one `watch.py` line (`--only rockinrio2026-09-11`); the `*/5` tracking
-      line was removed in the 11/09 replan. `--list` will still show SOAD `[on ]`.
-      ⚠️ **Pick the cadence deliberately** — the politeness budget is a design input. A
-      one-minute poll on an event 16 months out is ~525k requests/year for a dip that
-      needs a 67% crash; `*/15` is ~35k. Tighten it as the date approaches.
+### ⏸ PARKED 2026-09-07 — until Rock in Rio is finished
+
+`enabled: false` (Juan). The 11/09 night is armed for auto-buy and the two tools share
+one ~2 h browser session; nothing else competes until the **11/09 16:00 BRT hard stop**
+has passed. ⛔ **Nothing here is broken** — every value is verified and it read cleanly
+live. It is parked, not failed.
+
+- [ ] ⏰ **Un-park after 11/09 — and it is TWO switches, not one.** Flip `enabled` back
+      to `true` **and** add the id to a crontab `--only` line.
+      ⛔ Doing only the cron half is *worse than nothing*: `watch.py` returns **exit 2**
+      (`no enabled targets`) on a disabled `--only` target, so it would log a red run
+      every 15 minutes while watching precisely nothing. Doing only the flag half is
+      silent — `--list` shows `[on ]` and no cron line ever polls it.
+      ⏰ Do it in the same pass as deleting the five dated 11/09 cron lines
+      (⛔ not before 2026-09-12) — the one moment someone is already in this crontab.
+- [ ] ⚠️ **Pick the cadence then, not now.** A one-minute poll on an event 16 months out
+      is ~525k requests/year for a dip needing a 67% crash; `*/15` is ~35k.
 - [ ] **Arm the buy block after 11/09** — see
       [`../ticket-autobuy/ROADMAP.md`](../ticket-autobuy/ROADMAP.md).
 

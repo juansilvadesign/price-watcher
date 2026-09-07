@@ -2,8 +2,8 @@
   "id": "soad2027-01-15",
   "label": "System of a Down + Faith No More — 15/01/2027 (sex) · Pista Premium Itaú Personalité",
   "adapter": "buyticketbrasil",
-  "enabled": true,
-
+  "enabled": false,
+  "_note_PARKED": "⏸ PARKED 2026-09-07 (Juan): watch nothing here until Rock in Rio is finished. The 11/09 night is armed for auto-buy and the two tools share ONE browser session whose observed lifetime is ~2h, so nothing else competes for attention or requests until the 11/09 16:00 BRT hard stop has passed. ⛔ NOTHING about this target is wrong — every value in it is verified and it read cleanly live on 2026-09-06 (14 listings, 2 after filters). It is parked, not broken. ⛔ UN-PARKING IS TWO SWITCHES, NOT ONE: flip this flag back to true AND add the id to a crontab --only line. Doing only the cron half is worse than doing nothing — watch.py returns exit 2 ('no enabled targets') on a disabled --only target, so it would log a RED run every 15 minutes while watching precisely nothing. Doing only the flag half is silent: `--list` shows [on ] and no cron line ever polls it. ⏰ Do it in the same pass as deleting the five dated 11/09 cron lines (see ../../ticket-autobuy/TASKS.md — ⛔ not before 2026-09-12), which is the one moment someone is already looking at this crontab.",
   "_note_params": "Read off the event link Juan supplied 2026-09-06 and confirmed by a live probe the same day (14 listings, 8 sectors). ⚠️ data_millis resolves to 2027-01-15 23:59:59 BRT — an end-of-day sentinel, not a showtime. The DATE is confirmed (15/01/2027, Juan); the time is not a fact. ⛔ Note the slug reads '...2026' for a 2027 event: the slug is not a date.",
   "params": {
     "event_slug": "systemofadownefaithnomore2026",
@@ -11,32 +11,47 @@
     "evento_local": "1787146746767x563326921850224640",
     "cidade": "Rio de Janeiro"
   },
-
   "_note_filters": "Sector string VERIFIED against the live payload 2026-09-06: the whole of 'Pista Premium Itaú Personalité' is the sector and does NOT split across sector/entry_class (the adapter partitions the payload key on '||'). ⛔ entry_class is NOT null here, and that is the opposite of every Rock in Rio target: Maracanã DOES verify the ticket type (Juan, 2026-09-06), so a Meia Idoso / PCD / Professor row is a ticket he would be turned away with. Two classes are listed because both are usable by him and for different reasons: he holds a Meia Estudante, and an Inteira requires no proof from anyone. ⚠️ Inteira is the DEARER of the two today (R$1.320,00 vs R$1.197,90) and is included anyway — this is a secondary market ~16 months out and that ordering can invert; including it can only add a sub-R$400 row he could use, excluding it can only cost him one.",
   "filters": {
     "min_quantity": 1,
     "extra": {
-      "sector": ["Pista Premium Itaú Personalité"],
-      "entry_class": ["Meia Estudante", "Inteira"]
+      "sector": [
+        "Pista Premium Itaú Personalité"
+      ],
+      "entry_class": [
+        "Meia Estudante",
+        "Inteira"
+      ]
     }
   },
-
   "_note_rules": "🔴 critical_price is the ONLY armed rule, and that is deliberate (Juan, 2026-09-06). The decision here is binary — he goes to this event only if a ticket can be had under R$400 — so 'this is a new low' at R$1.100,00 is not information, it is noise on the way to a number that has not been reached. lowest_ever and lowest_in_window are therefore OFF, along with everything else. ⛔ Do not arm below_threshold at R$400 as a 'backup': it is edge-triggered on the same boundary critical_price already owns, so it adds a duplicate alert and nothing else.",
   "rules": {
     "critical_price": {
       "enabled": true,
       "price_brl": 400.0
     },
-    "lowest_ever": { "enabled": false },
-    "lowest_in_window": { "enabled": false, "window_hours": 6 },
-    "below_threshold": { "enabled": false, "price_brl": 400.0 },
-    "drop_pct": { "enabled": false, "pct": 5.0 },
-    "price_changed": { "enabled": false, "direction": "any", "min_delta_brl": 0.01 }
+    "lowest_ever": {
+      "enabled": false
+    },
+    "lowest_in_window": {
+      "enabled": false,
+      "window_hours": 6
+    },
+    "below_threshold": {
+      "enabled": false,
+      "price_brl": 400.0
+    },
+    "drop_pct": {
+      "enabled": false,
+      "pct": 5.0
+    },
+    "price_changed": {
+      "enabled": false,
+      "direction": "any",
+      "min_delta_brl": 0.01
+    }
   },
-
   "_note_critical_price": "⭐ Here critical_price does only ONE of its two jobs, and that is what makes R$400 coherent so far under the market. Job (1), the alert: it fires on ENTERING the band and again on every downward move inside it, comparing against the LAST RUN's minimum — not an all-time record — so it cannot ratchet shut and it reports a market falling through R$400 the whole way down. Job (2), the anomaly floor that keeps a mispriced row out of a baseline, has nothing to protect here because no baseline rule is armed. ⛔ If lowest_ever is ever switched back on, revisit this number immediately: R$400 sits ~3x under the observed floor (R$1.197,90 on 2026-09-06), so as a floor it is uselessly loose and a mispriced R$500,00 row would take the lowest_ever record permanently — the 04/09 R$66,00 failure, repeated.",
-
   "_note_SILENCE_IS_EXPECTED": "⚠️ This target is designed to say NOTHING for months. The market is ~3x above the only armed rule, so an empty log is the CORRECT output and is indistinguishable from a target that was never added to a cron --only list. ⛔ Silence is therefore not evidence the watcher works. Liveness comes from the poller's own cron log, which is touched on every run — not from alerts. A payload-shape change is loud (AdapterError -> exit 1); a target nobody polls is silent, and `--list` will still show it [on ].",
-
   "_note_buy": "⛔ Deliberately ABSENT, not forgotten. Watch-only until after 11/09/2026 (Juan, 2026-09-06): the Rock in Rio night is armed and the two tools share ONE browser session whose observed lifetime is ~2h, so arming a second night now would put SOAD in contention with the night that actually matters. Arm it afterwards via ../../ticket-autobuy/NEW_EVENT.md."
 }
