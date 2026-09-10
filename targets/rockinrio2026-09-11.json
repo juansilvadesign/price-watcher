@@ -50,12 +50,13 @@
   "_note_buy": "Read ONLY by the sibling tool knowledge/projects/ticket-autobuy; price-watcher never reads this key and never buys. AUTO-BUY armed 2026-09-02 on Juan's call: all 7 nights, ceiling R$200,00, ONE reservation per night ever. ⛔ min_price_brl is deliberately ABSENT -- Juan chose to buy a suspiciously cheap row rather than refuse it (an unpaid hold on a mispricing costs nothing, and refusing it misses the one dip the tool exists for). That is the opposite of price-watcher's critical_price, which still excludes sub-R$200 rows from BASELINES -- two different jobs for the same number, do not collapse them. ⏰ The runner only fires 10:00-04:00 BRT and disarms this block the moment it buys, so `enabled: true` here means 'armed', never 'will buy repeatedly'.",
   "buy": {
     "enabled": true,
-    "max_price_brl": 200.0,
+    "max_price_brl": 250.0,
     "quantity": 1,
     "sector": [
       "Gramado"
     ],
     "entry_class": null,
-    "min_available": 20
-  }
+    "min_available": 1
+  },
+  "_note_buy_min_available": "min_available was 20 from 2026-09-05 (d2cfa00) until 2026-09-10, set from a measurement that blamed THIN stock for a failed click (qty 168 ordered; qty 4 and qty 1 did not). It silently refused two real sub-ceiling windows -- 09-06 Meia Jovem Baixa Renda R$198,00 qty 12 (7 polls) and 09-07 Meia PCD R$198,00 qty 11 (10 polls) -- while price-watcher alerted CRITICAL on both and autobuy.log stayed empty. ⛔ Depth was also the WRONG protection: on 2026-09-10 10:55 the R$242,00 Inteira row had qty 309, the deepest in the market, and STILL vanished during the ~30 s walk to the final click. What kills a buy is how long the PRICE lasts, not how many units back it. Juan's call 2026-09-10: set to 1, same reasoning already written into _note_buy for min_price_brl -- an unpaid hold costs nothing, a refused dip costs the ticket."
 }
