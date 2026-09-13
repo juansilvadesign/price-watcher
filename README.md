@@ -1,5 +1,16 @@
 # price-watcher
 
+<p align="center">
+  <img src="assets/showcase/price-watcher-ticket-autobuy-showcase.webp"
+       alt="price-watcher and ticket-autobuy: a ticket page showing one price opens to reveal the nineteen in its payload, the watcher fires a new-lowest alert to Telegram, a vertical line divides the two tools with the one config key that crosses it, the buyer walks a checkout to a completed order, and the counts settle at 424 tests, 7 nights and 1 real order"
+       width="100%">
+</p>
+
+*One reel, two repos.* `price-watcher` watches and **cannot buy**; [`ticket-autobuy`](../ticket-autobuy/)
+holds the browser and reserves. The only thing that crosses the line between them is a `buy`
+block in a target file that the watcher parses and ignores. Source composition:
+[`juansilva.design/motion/price-watcher-ticket-autobuy-showcase`](https://github.com/juansilvadesign/juansilva.design).
+
 A personal **hub** for watching prices on arbitrary websites — the ones the generic
 trackers (Zoom, Buscapé, Amazon trackers) will never cover because they only
 integrate with marketplaces they have deals with.
@@ -31,7 +42,7 @@ tools/
 targets/*.json           one file per thing being watched
 history/*.jsonl          append-only price record
 subscribers.json         approved recipients (gitignored, absent until you add one)
-tests/                   187 tests, fully offline (real captured fixture)
+tests/                   228 tests, fully offline (real captured fixture)
 ```
 
 **Zero dependencies.** Python 3.10+ standard library only — no venv needed, nothing
@@ -45,7 +56,7 @@ python3 watch.py --verbose             # print every listing, not just the cheap
 python3 watch.py --only rockinrio2026-09-04
 python3 watch.py --dry-run             # fetch + evaluate, write nothing
 python3 watch.py --list                # show the registry
-python3 -m unittest discover -s tests -t .   # 187 tests, no network
+python3 -m unittest discover -s tests -t .   # 228 tests, no network
 ```
 
 Exit codes: `0` clean · `1` at least one adapter failed · `2` configuration error ·
